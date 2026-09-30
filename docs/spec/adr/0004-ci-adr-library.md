@@ -22,7 +22,7 @@ A missing sensor records `applies` with `sensor: "missing"`, does not record `vi
 
 The first repeated violation may open one `ProposalCreated` of kind `review_violations` for that repository and ADR. Later red SHAs append `CheckRecorded` only. They must not change the decision.
 
-The command knows only the pull request it is running on. Full GitHub ingestion is a later package.
+The command knows only the pull request it is running on. Other pull requests reach the log as `PullRequestReceived`, which `services/agent` pulls from GitHub (ADR-0008). That event never carries `applies`, `cited`, or `violated`. Full GitHub ingestion beyond pull requests is a later package.
 
 ## Rejected alternatives
 

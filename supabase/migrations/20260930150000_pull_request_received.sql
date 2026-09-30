@@ -1,14 +1,15 @@
--- PullRequestReceived: the GitHub webhook receiver (services/agent) appends one
--- event per pull_request delivery on stream_type 'pull_request'.
+-- PullRequestReceived: the GitHub poller (services/agent) appends one
+-- event per observed pull request state on stream_type 'pull_request'.
 -- Grant row only. The WP-01 trigger is not edited.
 
 insert into public.event_type_grants (role_name, event_type)
 values ('horizon_writer', 'PullRequestReceived');
 
--- One stored event per X-GitHub-Delivery per organization. This is the durable
--- dedupe; the receiver keeps no authoritative in-memory state.
-create unique index events_pull_request_delivery_key
-  on public.events (org_id, (payload ->> 'delivery_id'))
+-- One stored event per idempotency key per organization. The key is
+-- {repository}#{number}@{head_sha}:{state}. This is the durable dedupe; the poller
+-- keeps no authoritative in-memory state.
+create unique index events_pull_request_idempotency_key
+  on public.events (org_id, (payload ->> 'idempotency_key'))
   where event_type = 'PullRequestReceived';
 
 -- PostgREST connects as `authenticator` and switches to the JWT role.
@@ -21,14 +22,14 @@ begin
 end
 $$;
 
--- The receiver's only write path. horizon_writer has INSERT on events and no
+-- The poller's only write path. horizon_writer has INSERT on events and no
 -- SELECT, so it cannot read the next version itself. This function runs as its
 -- owner, reads the next version under a per-stream lock, sets the session
 -- settings the trigger reads, and inserts. The trigger still resolves the actor
 -- and checks the grant; the payload is never trusted for either.
 --
 -- The actor is the `sub` claim of the writer JWT.
--- Returns 'appended', or 'duplicate' when the delivery is already stored.
+-- Returns 'appended', or 'duplicate' when the key is already stored.
 create or replace function public.append_pull_request_received(
   p_org_id uuid,
   p_stream_id uuid,
@@ -42,7 +43,7 @@ as $$
 declare
   claims jsonb;
   actor uuid;
-  delivery text;
+  idem_key text;
   next_version integer;
 begin
   begin
@@ -59,12 +60,12 @@ begin
   if jsonb_typeof(p_payload) is distinct from 'object' then
     raise exception 'payload must be a JSON object' using errcode = '22023';
   end if;
-  delivery := nullif(p_payload ->> 'delivery_id', '');
-  if delivery is null then
-    raise exception 'payload.delivery_id is required' using errcode = '22023';
+  idem_key := nullif(p_payload ->> 'idempotency_key', '');
+  if idem_key is null then
+    raise exception 'payload.idempotency_key is required' using errcode = '22023';
   end if;
 
-  -- Serializes appends to one stream, so a concurrent delivery reads the
+  -- Serializes appends to one stream, so a concurrent append reads the
   -- version after ours instead of colliding on (stream_id, version).
   perform pg_advisory_xact_lock(hashtextextended(p_stream_id::text, 0));
 
@@ -73,7 +74,7 @@ begin
     from public.events as e
     where e.org_id = p_org_id
       and e.event_type = 'PullRequestReceived'
-      and e.payload ->> 'delivery_id' = delivery
+      and e.payload ->> 'idempotency_key' = idem_key
   ) then
     return 'duplicate';
   end if;

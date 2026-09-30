@@ -1,15 +1,14 @@
-package horizon.agent.webhook
+package horizon.agent.github
 
 import io.ktor.client.request.get
-import io.ktor.client.request.header
-import io.ktor.client.request.post
-import io.ktor.client.request.setBody
 import io.ktor.http.HttpStatusCode
 import io.ktor.server.testing.testApplication
+import horizon.agent.health
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.boolean
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import java.time.Instant
 import java.util.UUID
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -17,145 +16,157 @@ import kotlin.test.assertFailsWith
 import kotlin.test.assertNotEquals
 import kotlin.test.assertTrue
 
-class GithubWebhookTest {
-    private val secret = "secret"
+class PullRequestPollerTest {
     private val orgId = UUID.fromString("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
+    private val repo = "acme/horizon"
+
+    private fun config(vararg repositories: String = arrayOf(repo)) = PollerConfig(
+        githubToken = "token",
+        repositories = repositories.toList(),
+        orgId = orgId,
+    )
+
+    private fun snapshot(
+        number: Int,
+        sha: String = "abc123",
+        state: PullRequestState = PullRequestState.Open,
+        updatedAt: String = "2026-09-30T10:00:00Z",
+        repository: String = repo,
+    ) = PullRequestSnapshot(repository, number, sha, state, Instant.parse(updatedAt))
 
     @Test
-    fun hmacMatchesAnIndependentVector() {
-        assertEquals(
-            "88aab3ede8d3adf94d26ab90d3bafd4a2083070c3bcce9c014ee04a443847c0b",
-            hmacSha256Hex("secret", "hello".toByteArray()),
-        )
-    }
-
-    @Test
-    fun rejectsABadSignatureAndStoresNothing() = testApplication {
+    fun appendsAPullRequestOnce() = runBlocking {
         val appender = InMemoryEventAppender()
-        install(appender)
-        val response = client.post("/webhooks/github") {
-            header("X-Hub-Signature-256", "sha256=" + "ab".repeat(32))
-            header("X-GitHub-Delivery", "delivery-1")
-            header("X-GitHub-Event", "pull_request")
-            setBody(prBody(action = "opened", number = 1))
-        }
-        assertEquals(HttpStatusCode.Unauthorized, response.status)
-        assertTrue(appender.events.isEmpty())
-    }
+        val source = ScriptedSource(listOf(snapshot(42)))
+        val poller = PullRequestPoller(config(), source, appender)
 
-    @Test
-    fun appendsAPullRequestDeliveryOnce() = testApplication {
-        val appender = InMemoryEventAppender()
-        install(appender)
-        val body = prBody(action = "opened", number = 42)
-        val first = client.post("/webhooks/github") {
-            signed(body)
-            header("X-GitHub-Delivery", "delivery-1")
-            header("X-GitHub-Event", "pull_request")
-            setBody(body)
-        }
-        val second = client.post("/webhooks/github") {
-            signed(body)
-            header("X-GitHub-Delivery", "delivery-1")
-            header("X-GitHub-Event", "pull_request")
-            setBody(body)
-        }
-        assertEquals(HttpStatusCode.Accepted, first.status)
-        assertEquals(HttpStatusCode.NoContent, second.status)
+        val first = poller.pollOnce()
+        val second = poller.pollOnce()
+
+        assertEquals(PollResult(appended = 1, duplicates = 0, failedRepositories = emptyList()), first)
+        assertEquals(0, second.appended)
         assertEquals(1, appender.events.size)
         val stored = appender.events.single()
-        val event = stored.delivery
+        val event = stored.observation
         assertEquals(PULL_REQUEST_EVENT, event.eventType)
         assertEquals(1, stored.version)
         assertEquals(orgId, event.orgId)
-        assertEquals(streamIdFor(orgId, "acme/horizon", 42), event.streamId)
+        assertEquals(streamIdFor(orgId, repo, 42), event.streamId)
         val payload = event.payload.jsonObject
-        assertEquals("delivery-1", payload.getValue("delivery_id").jsonPrimitive.content)
-        assertEquals("opened", payload.getValue("action").jsonPrimitive.content)
-        assertEquals("acme/horizon", payload.getValue("repository").jsonPrimitive.content)
+        assertEquals("acme/horizon#42@abc123:open", payload.getValue("idempotency_key").jsonPrimitive.content)
+        assertEquals(repo, payload.getValue("repository").jsonPrimitive.content)
         assertEquals("42", payload.getValue("pull_request").jsonPrimitive.content)
         assertEquals("abc123", payload.getValue("head_sha").jsonPrimitive.content)
+        assertEquals("open", payload.getValue("state").jsonPrimitive.content)
         assertEquals(false, payload.getValue("merged").jsonPrimitive.boolean)
         assertNotEquals("CheckRecorded", event.eventType)
     }
 
     @Test
-    fun secondActionOnTheSamePrGetsVersionTwo() = testApplication {
+    fun aNewHeadShaAndAMergeEachGetTheNextVersion() = runBlocking {
         val appender = InMemoryEventAppender()
-        install(appender)
-        val opened = prBody(action = "opened", number = 7)
-        val synced = prBody(action = "synchronize", number = 7, sha = "def456")
-        val first = client.post("/webhooks/github") {
-            signed(opened)
-            header("X-GitHub-Delivery", "delivery-a")
-            header("X-GitHub-Event", "pull_request")
-            setBody(opened)
-        }
-        val second = client.post("/webhooks/github") {
-            signed(synced)
-            header("X-GitHub-Delivery", "delivery-b")
-            header("X-GitHub-Event", "pull_request")
-            setBody(synced)
-        }
-        assertEquals(HttpStatusCode.Accepted, first.status)
-        assertEquals(HttpStatusCode.Accepted, second.status)
-        assertEquals(2, appender.events.size)
-        val stream = streamIdFor(orgId, "acme/horizon", 7)
-        assertEquals(listOf(1, 2), appender.events.map { it.version })
-        assertTrue(appender.events.all { it.delivery.streamId == stream })
-        assertEquals("synchronize", appender.events[1].delivery.payload.jsonObject.getValue("action").jsonPrimitive.content)
+        val source = ScriptedSource(listOf(snapshot(7)))
+        val poller = PullRequestPoller(config(), source, appender)
+        poller.pollOnce()
+
+        source.snapshots = listOf(snapshot(7, sha = "def456", updatedAt = "2026-09-30T11:00:00Z"))
+        poller.pollOnce()
+
+        source.snapshots = listOf(
+            snapshot(7, sha = "def456", state = PullRequestState.Merged, updatedAt = "2026-09-30T12:00:00Z"),
+        )
+        poller.pollOnce()
+
+        assertEquals(listOf(1, 2, 3), appender.events.map { it.version })
+        val stream = streamIdFor(orgId, repo, 7)
+        assertTrue(appender.events.all { it.observation.streamId == stream })
+        val last = appender.events.last().observation.payload.jsonObject
+        assertEquals("merged", last.getValue("state").jsonPrimitive.content)
+        assertEquals(true, last.getValue("merged").jsonPrimitive.boolean)
     }
 
     @Test
-    fun acknowledgesANonPullRequestEventAndStoresNothing() = testApplication {
+    fun aChangeThatIsNotAStateOrShaChangeStoresNothing() = runBlocking {
+        // A comment or a label moves updated_at only; the idempotency key is unchanged.
         val appender = InMemoryEventAppender()
-        install(appender)
-        val body = """{"ref":"refs/heads/main"}"""
-        val response = client.post("/webhooks/github") {
-            signed(body)
-            header("X-GitHub-Delivery", "delivery-2")
-            header("X-GitHub-Event", "push")
-            setBody(body)
-        }
-        assertEquals(HttpStatusCode.NoContent, response.status)
-        assertTrue(appender.events.isEmpty())
+        val source = ScriptedSource(listOf(snapshot(9)))
+        val poller = PullRequestPoller(config(), source, appender)
+        poller.pollOnce()
+
+        source.snapshots = listOf(snapshot(9, updatedAt = "2026-09-30T18:00:00Z"))
+        val result = poller.pollOnce()
+
+        assertEquals(0, result.appended)
+        assertEquals(1, result.duplicates)
+        assertEquals(1, appender.events.size)
     }
 
     @Test
-    fun retriesAfterTheAppenderFails() = testApplication {
+    fun aRestartDoesNotAppendStoredStateAgain() = runBlocking {
+        // A second poller has an empty cursor, as after a restart. The appender owns
+        // dedupe of stored events, so nothing is appended twice.
+        val appender = InMemoryEventAppender()
+        val source = ScriptedSource(listOf(snapshot(5)))
+        val before = PullRequestPoller(config(), source, appender).pollOnce()
+        val after = PullRequestPoller(config(), source, appender).pollOnce()
+
+        assertEquals(1, before.appended)
+        assertEquals(0, after.appended)
+        assertEquals(1, after.duplicates)
+        assertEquals(1, appender.events.size)
+    }
+
+    @Test
+    fun theCursorAdvancesOnlyAfterEverythingIsStored() = runBlocking {
         val appender = FlakyAppender()
-        install(appender)
-        val body = prBody(action = "opened", number = 3)
-        val failed = client.post("/webhooks/github") {
-            signed(body)
-            header("X-GitHub-Delivery", "delivery-3")
-            header("X-GitHub-Event", "pull_request")
-            setBody(body)
-        }
-        val retried = client.post("/webhooks/github") {
-            signed(body)
-            header("X-GitHub-Delivery", "delivery-3")
-            header("X-GitHub-Event", "pull_request")
-            setBody(body)
-        }
-        assertEquals(HttpStatusCode.InternalServerError, failed.status)
-        assertEquals(HttpStatusCode.Accepted, retried.status)
+        val source = ScriptedSource(listOf(snapshot(3)))
+        val poller = PullRequestPoller(config(), source, appender, log = {})
+
+        val failed = poller.pollOnce()
+        val retried = poller.pollOnce()
+
+        assertEquals(listOf(repo), failed.failedRepositories)
+        assertEquals(1, retried.appended)
         assertEquals(2, appender.calls)
         assertEquals(1, appender.appended)
+        // The failed poll did not advance the cursor, so the retry read the same window.
+        assertEquals(listOf<Instant?>(null, null), source.sinceSeen)
     }
 
     @Test
-    fun aStoredDeliveryIsNotAppendedAgainAfterARestart() = runBlocking {
-        // A second DeliveryLog has an empty in-memory set, as after a restart.
-        // The appender owns dedupe of stored events, so nothing is appended twice.
+    fun theCursorLetsTheNextPollReadOnlyNewerPullRequests() = runBlocking {
         val appender = InMemoryEventAppender()
-        val config = WebhookConfig(secret = secret, orgId = orgId)
-        val body = prBody(action = "opened", number = 5).toByteArray()
-        val before = DeliveryLog(config, appender).accept("delivery-5", "pull_request", body)
-        val after = DeliveryLog(config, appender).accept("delivery-5", "pull_request", body)
-        assertEquals(AcceptResult.Appended, before)
-        assertEquals(AcceptResult.Duplicate, after)
-        assertEquals(1, appender.events.size)
+        val source = ScriptedSource(listOf(snapshot(1, updatedAt = "2026-09-30T10:00:00Z")))
+        val poller = PullRequestPoller(config(), source, appender)
+
+        poller.pollOnce()
+        poller.pollOnce()
+
+        assertEquals(listOf<Instant?>(null, Instant.parse("2026-09-30T10:00:00Z")), source.sinceSeen)
+    }
+
+    @Test
+    fun oneFailingRepositoryDoesNotStopTheOthers() = runBlocking {
+        val appender = InMemoryEventAppender()
+        val source = PullRequestSource { repository, _ ->
+            if (repository == "acme/broken") error("GitHub list failed: 404")
+            listOf(snapshot(1, repository = repository))
+        }
+        val poller = PullRequestPoller(config("acme/broken", "acme/horizon"), source, appender, log = {})
+
+        val result = poller.pollOnce()
+
+        assertEquals(listOf("acme/broken"), result.failedRepositories)
+        assertEquals(1, result.appended)
+    }
+
+    @Test
+    fun repositoriesHaveSeparateStreams() = runBlocking {
+        val appender = InMemoryEventAppender()
+        val source = PullRequestSource { repository, _ -> listOf(snapshot(1, repository = repository)) }
+        PullRequestPoller(config("acme/a", "acme/b"), source, appender).pollOnce()
+
+        assertEquals(2, appender.events.map { it.observation.streamId }.toSet().size)
     }
 
     @Test
@@ -165,16 +176,18 @@ class GithubWebhookTest {
     }
 
     @Test
-    fun healthDoesNotRequireASignature() = testApplication {
-        install(InMemoryEventAppender())
+    fun healthIsTheOnlyRoute() = testApplication {
+        application { health() }
         assertEquals(HttpStatusCode.OK, client.get("/health").status)
+        assertEquals(HttpStatusCode.NotFound, client.get("/webhooks/github").status)
     }
 
     @Test
     fun writerKeyIsRequiredWhenSupabaseIsConfigured() {
         assertFailsWith<IllegalArgumentException> {
-            WebhookConfig(
-                secret = "secret",
+            PollerConfig(
+                githubToken = "token",
+                repositories = listOf(repo),
                 orgId = orgId,
                 supabaseUrl = "http://localhost:54321",
                 supabaseWriterKey = null,
@@ -182,45 +195,48 @@ class GithubWebhookTest {
         }
     }
 
-    private fun io.ktor.server.testing.ApplicationTestBuilder.install(appender: EventAppender) {
-        application {
-            val config = WebhookConfig(
-                secret = secret,
-                orgId = orgId,
-            )
-            githubWebhooks(config, DeliveryLog(config, appender))
+    @Test
+    fun aTokenAndWellFormedRepositoriesAreRequired() {
+        assertFailsWith<IllegalArgumentException> {
+            PollerConfig(githubToken = "", repositories = listOf(repo), orgId = orgId)
+        }
+        assertFailsWith<IllegalArgumentException> {
+            PollerConfig(githubToken = "token", repositories = emptyList(), orgId = orgId)
+        }
+        assertFailsWith<IllegalArgumentException> {
+            PollerConfig(githubToken = "token", repositories = listOf("not-a-repo"), orgId = orgId)
         }
     }
 
-    private fun io.ktor.client.request.HttpRequestBuilder.signed(body: String) {
-        header("X-Hub-Signature-256", "sha256=" + hmacSha256Hex(secret, body.toByteArray()))
+    @Test
+    fun configReadsTheEnvironment() {
+        val config = PollerConfig.fromEnv(
+            mapOf(
+                "GITHUB_TOKEN" to "token",
+                "GITHUB_REPOSITORIES" to "acme/a, acme/b",
+                "HORIZON_ORG_ID" to orgId.toString(),
+                "GITHUB_POLL_INTERVAL_SECONDS" to "30",
+            ),
+        )
+        assertEquals(listOf("acme/a", "acme/b"), config.repositories)
+        assertEquals(30, config.pollInterval.inWholeSeconds)
     }
+}
 
-    private fun prBody(
-        action: String,
-        number: Int,
-        sha: String = "abc123",
-        merged: Boolean = false,
-        repository: String = "acme/horizon",
-    ): String = """
-        {
-          "action":"$action",
-          "number":$number,
-          "pull_request":{
-            "number":$number,
-            "merged":$merged,
-            "head":{"sha":"$sha"}
-          },
-          "repository":{"full_name":"$repository"}
-        }
-    """.trimIndent()
+private class ScriptedSource(var snapshots: List<PullRequestSnapshot>) : PullRequestSource {
+    val sinceSeen = mutableListOf<Instant?>()
+
+    override suspend fun changedSince(repository: String, since: Instant?): List<PullRequestSnapshot> {
+        sinceSeen += since
+        return snapshots
+    }
 }
 
 private class FlakyAppender : EventAppender {
     var calls = 0
     var appended = 0
 
-    override suspend fun append(delivery: GithubDelivery): AppendResult {
+    override suspend fun append(observation: PullRequestObservation): AppendResult {
         calls += 1
         if (calls == 1) error("supabase down")
         appended += 1

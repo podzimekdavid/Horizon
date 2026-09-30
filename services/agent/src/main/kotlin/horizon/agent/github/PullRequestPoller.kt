@@ -1,60 +1,66 @@
-package horizon.agent.webhook
+package horizon.agent.github
 
-import io.ktor.http.HttpStatusCode
-import io.ktor.server.application.Application
-import io.ktor.server.request.header
-import io.ktor.server.request.receiveChannel
-import io.ktor.server.response.respond
-import io.ktor.server.response.respondText
-import io.ktor.server.routing.get
-import io.ktor.server.routing.post
-import io.ktor.server.routing.routing
-import io.ktor.utils.io.readRemaining
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
-import kotlinx.io.readByteArray
-import kotlinx.serialization.json.Json
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.buildJsonObject
-import kotlinx.serialization.json.contentOrNull
-import kotlinx.serialization.json.intOrNull
-import kotlinx.serialization.json.jsonObject
-import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
-import java.security.MessageDigest
+import java.time.Instant
 import java.util.UUID
-import javax.crypto.Mac
-import javax.crypto.spec.SecretKeySpec
+import kotlin.coroutines.coroutineContext
+import kotlin.time.Duration
+import kotlin.time.Duration.Companion.seconds
 
-/** Horizon event for one GitHub `pull_request` webhook delivery. Not CheckRecorded. */
+/** Horizon event for one observed pull request state. Not CheckRecorded. */
 const val PULL_REQUEST_EVENT = "PullRequestReceived"
 const val PULL_REQUEST_STREAM = "pull_request"
-const val GITHUB_PULL_REQUEST = "pull_request"
 
-data class WebhookConfig(
-    val secret: String,
+/** Payload key of the idempotency key. `append_pull_request_received` and its unique index dedupe on it. */
+const val IDEMPOTENCY_KEY_FIELD = "idempotency_key"
+
+private val REPOSITORY_NAME = Regex("^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
+
+data class PollerConfig(
+    val githubToken: String,
+    val repositories: List<String>,
     val orgId: UUID,
     val port: Int = 8080,
+    val pollInterval: Duration = 60.seconds,
+    val githubApiUrl: String = "https://api.github.com",
+    val maxPages: Int = 10,
     val supabaseUrl: String? = null,
     val supabaseWriterKey: String? = null,
 ) {
     init {
-        require(secret.isNotEmpty()) { "GITHUB_WEBHOOK_SECRET is required" }
+        require(githubToken.isNotEmpty()) { "GITHUB_TOKEN is required" }
+        require(repositories.isNotEmpty()) { "GITHUB_REPOSITORIES is required" }
+        require(repositories.all { REPOSITORY_NAME.matches(it) }) {
+            "GITHUB_REPOSITORIES entries are owner/name"
+        }
+        require(pollInterval.isPositive()) { "GITHUB_POLL_INTERVAL_SECONDS is positive" }
+        require(maxPages >= 1) { "GITHUB_POLL_MAX_PAGES is at least 1" }
         require((supabaseUrl == null) == (supabaseWriterKey == null)) {
             "HORIZON_SUPABASE_URL and HORIZON_GITHUB_WRITER_KEY are set together"
         }
     }
 
     companion object {
-        fun fromEnv(env: Map<String, String> = System.getenv()): WebhookConfig {
+        fun fromEnv(env: Map<String, String> = System.getenv()): PollerConfig {
             val url = env["HORIZON_SUPABASE_URL"]?.takeIf { it.isNotBlank() }
             val key = env["HORIZON_GITHUB_WRITER_KEY"]?.takeIf { it.isNotBlank() }
-            return WebhookConfig(
-                secret = env["GITHUB_WEBHOOK_SECRET"].orEmpty(),
+            return PollerConfig(
+                githubToken = env["GITHUB_TOKEN"].orEmpty(),
+                repositories = env["GITHUB_REPOSITORIES"].orEmpty()
+                    .split(',')
+                    .map { it.trim() }
+                    .filter { it.isNotEmpty() },
                 orgId = UUID.fromString(env.required("HORIZON_ORG_ID")),
                 port = env["PORT"]?.toIntOrNull() ?: 8080,
+                pollInterval = (env["GITHUB_POLL_INTERVAL_SECONDS"]?.toLongOrNull() ?: 60L).seconds,
+                githubApiUrl = env["GITHUB_API_URL"]?.takeIf { it.isNotBlank() } ?: "https://api.github.com",
+                maxPages = env["GITHUB_POLL_MAX_PAGES"]?.toIntOrNull() ?: 10,
                 supabaseUrl = url,
                 supabaseWriterKey = key,
             )
@@ -65,25 +71,57 @@ data class WebhookConfig(
     }
 }
 
+enum class PullRequestState(val wire: String) {
+    Open("open"),
+    Closed("closed"),
+    Merged("merged"),
+}
+
+/** One pull request as GitHub reports it at poll time. */
+data class PullRequestSnapshot(
+    val repository: String,
+    val number: Int,
+    val headSha: String,
+    val state: PullRequestState,
+    val updatedAt: Instant,
+) {
+    /**
+     * A new key means the pull request changed in a way Horizon records: a new head
+     * SHA, or a move between open, closed, and merged. A comment or a label changes
+     * `updated_at` only, so it repeats the key and the database stores nothing.
+     */
+    val idempotencyKey: String get() = "$repository#$number@$headSha:${state.wire}"
+
+    fun toPayload(): JsonObject = buildJsonObject {
+        put(IDEMPOTENCY_KEY_FIELD, idempotencyKey)
+        put("repository", repository)
+        put("pull_request", number)
+        put("head_sha", headSha)
+        put("state", state.wire)
+        put("merged", state == PullRequestState.Merged)
+        put("updated_at", updatedAt.toString())
+    }
+}
+
 /**
- * One delivery to append. It carries no version and no actor: the database picks
+ * One observation to append. It carries no version and no actor: the database picks
  * the next version under a stream lock, and the trigger resolves the actor from
  * the writer session.
  */
-data class GithubDelivery(
+data class PullRequestObservation(
     val orgId: UUID,
     val streamId: UUID,
     val eventType: String,
     val schemaVersion: Int,
     val payload: JsonElement,
-    val deliveryId: String,
+    val idempotencyKey: String,
 )
 
 /** A stored event, as the in-memory appender keeps it. */
-data class StoredEvent(val version: Int, val delivery: GithubDelivery)
+data class StoredEvent(val version: Int, val observation: PullRequestObservation)
 
 fun interface EventAppender {
-    suspend fun append(delivery: GithubDelivery): AppendResult
+    suspend fun append(observation: PullRequestObservation): AppendResult
 }
 
 sealed interface AppendResult {
@@ -94,121 +132,91 @@ sealed interface AppendResult {
 class InMemoryEventAppender : EventAppender {
     val events = mutableListOf<StoredEvent>()
 
-    override suspend fun append(delivery: GithubDelivery): AppendResult {
-        check(delivery.eventType == PULL_REQUEST_EVENT) {
-            "GitHub webhook appends $PULL_REQUEST_EVENT"
+    override suspend fun append(observation: PullRequestObservation): AppendResult {
+        check(observation.eventType == PULL_REQUEST_EVENT) {
+            "GitHub polling appends $PULL_REQUEST_EVENT"
         }
-        if (events.any { it.delivery.deliveryId == delivery.deliveryId }) return AppendResult.Duplicate
-        val version = events.count { it.delivery.streamId == delivery.streamId } + 1
-        events += StoredEvent(version, delivery)
+        if (events.any { it.observation.idempotencyKey == observation.idempotencyKey }) {
+            return AppendResult.Duplicate
+        }
+        val version = events.count { it.observation.streamId == observation.streamId } + 1
+        events += StoredEvent(version, observation)
         return AppendResult.Appended
     }
 }
 
-class DeliveryLog(
-    private val config: WebhookConfig,
+/** Reads pull requests from GitHub. Read-only: it never writes to GitHub. */
+fun interface PullRequestSource {
+    /**
+     * Pull requests of [repository] updated at or after [since], any state.
+     * [since] is null on the first poll, which loads the history GitHub still lists.
+     */
+    suspend fun changedSince(repository: String, since: Instant?): List<PullRequestSnapshot>
+}
+
+data class PollResult(
+    val appended: Int,
+    val duplicates: Int,
+    val failedRepositories: List<String>,
+)
+
+/**
+ * Pulls pull requests from GitHub on an interval and appends one `PullRequestReceived`
+ * per changed state. GitHub does not call this service.
+ *
+ * The per-repository cursor is memory only and only a shortcut: it is advanced after
+ * every snapshot of a poll is stored, so a failure re-reads the same window. After a
+ * restart the cursor is empty, the next poll re-reads what GitHub lists, and the
+ * appender's dedupe on the idempotency key stores nothing twice.
+ */
+class PullRequestPoller(
+    private val config: PollerConfig,
+    private val source: PullRequestSource,
     private val appender: EventAppender,
+    private val log: (String) -> Unit = System.err::println,
 ) {
-    // Only a shortcut for deliveries that need no append. The appender owns dedupe
-    // of stored events: after a restart this set is empty and the log still decides.
-    private val seen = mutableSetOf<String>()
-    private val mutex = Mutex()
+    private val cursors = mutableMapOf<String, Instant>()
 
-    suspend fun accept(deliveryId: String, githubEvent: String, body: ByteArray): AcceptResult = mutex.withLock {
-        if (deliveryId in seen) return AcceptResult.Duplicate
-        if (githubEvent != GITHUB_PULL_REQUEST) {
-            seen += deliveryId
-            return AcceptResult.Ignored
-        }
-        val parsed = parsePullRequest(body) ?: run {
-            // Valid signature, unusable body: acknowledge so GitHub does not retry forever.
-            seen += deliveryId
-            return AcceptResult.Ignored
-        }
-        val delivery = GithubDelivery(
-            orgId = config.orgId,
-            streamId = streamIdFor(config.orgId, parsed.repository, parsed.number),
-            eventType = PULL_REQUEST_EVENT,
-            schemaVersion = 1,
-            payload = parsed.toPayload(deliveryId),
-            deliveryId = deliveryId,
-        )
-        return when (appender.append(delivery)) {
-            AppendResult.Appended -> {
-                seen += deliveryId
-                AcceptResult.Appended
-            }
-            AppendResult.Duplicate -> {
-                seen += deliveryId
-                AcceptResult.Duplicate
-            }
+    suspend fun run() {
+        while (coroutineContext.isActive) {
+            pollOnce()
+            delay(config.pollInterval)
         }
     }
-}
 
-sealed interface AcceptResult {
-    data object Appended : AcceptResult
-    data object Ignored : AcceptResult
-    data object Duplicate : AcceptResult
-}
-
-data class PullRequestFields(
-    val action: String,
-    val repository: String,
-    val number: Int,
-    val headSha: String,
-    val merged: Boolean?,
-) {
-    fun toPayload(deliveryId: String): JsonObject = buildJsonObject {
-        put("delivery_id", deliveryId)
-        put("action", action)
-        put("repository", repository)
-        put("pull_request", number)
-        put("head_sha", headSha)
-        if (merged != null) put("merged", merged)
-    }
-}
-
-fun Application.githubWebhooks(config: WebhookConfig, log: DeliveryLog) {
-    routing {
-        get("/health") {
-            call.respond(HttpStatusCode.OK, "ok")
-        }
-        post("/webhooks/github") {
-            val body = call.receiveChannel().readRemaining().readByteArray()
-            if (!signatureMatches(config.secret, body, call.request.header("X-Hub-Signature-256"))) {
-                call.respond(HttpStatusCode.Unauthorized)
-                return@post
-            }
-            val deliveryId = call.request.header("X-GitHub-Delivery")
-            val githubEvent = call.request.header("X-GitHub-Event")
-            if (deliveryId.isNullOrBlank() || githubEvent.isNullOrBlank()) {
-                call.respond(HttpStatusCode.BadRequest)
-                return@post
-            }
-            val status = try {
-                when (log.accept(deliveryId, githubEvent, body)) {
-                    AcceptResult.Appended -> HttpStatusCode.Accepted
-                    AcceptResult.Ignored, AcceptResult.Duplicate -> HttpStatusCode.NoContent
+    suspend fun pollOnce(): PollResult {
+        var appended = 0
+        var duplicates = 0
+        val failed = mutableListOf<String>()
+        for (repository in config.repositories) {
+            try {
+                val snapshots = source.changedSince(repository, cursors[repository])
+                // Oldest first, so a pull request's stream reads in the order things happened.
+                for (snapshot in snapshots.sortedBy { it.updatedAt }) {
+                    when (appender.append(observationFor(snapshot))) {
+                        AppendResult.Appended -> appended += 1
+                        AppendResult.Duplicate -> duplicates += 1
+                    }
                 }
-            } catch (_: Exception) {
-                HttpStatusCode.InternalServerError
+                snapshots.maxOfOrNull { it.updatedAt }?.let { cursors[repository] = it }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                failed += repository
+                log("poll of $repository failed: ${e.message}")
             }
-            call.respondText("", status = status)
         }
+        return PollResult(appended, duplicates, failed)
     }
-}
 
-fun signatureMatches(secret: String, body: ByteArray, header: String?): Boolean {
-    if (header == null || !header.startsWith("sha256=") || header.length != "sha256=".length + 64) return false
-    val expected = "sha256=" + hmacSha256Hex(secret, body)
-    return MessageDigest.isEqual(expected.toByteArray(Charsets.UTF_8), header.toByteArray(Charsets.UTF_8))
-}
-
-fun hmacSha256Hex(secret: String, body: ByteArray): String {
-    val mac = Mac.getInstance("HmacSHA256")
-    mac.init(SecretKeySpec(secret.toByteArray(Charsets.UTF_8), "HmacSHA256"))
-    return mac.doFinal(body).joinToString("") { "%02x".format(it) }
+    private fun observationFor(snapshot: PullRequestSnapshot) = PullRequestObservation(
+        orgId = config.orgId,
+        streamId = streamIdFor(config.orgId, snapshot.repository, snapshot.number),
+        eventType = PULL_REQUEST_EVENT,
+        schemaVersion = 1,
+        payload = snapshot.toPayload(),
+        idempotencyKey = snapshot.idempotencyKey,
+    )
 }
 
 /**
@@ -223,36 +231,3 @@ fun streamIdFor(orgId: UUID, repository: String, pullRequestNumber: Int): UUID =
     UUID.nameUUIDFromBytes(
         "$PULL_REQUEST_STREAM:$orgId:$repository:$pullRequestNumber".toByteArray(Charsets.UTF_8),
     )
-
-fun parsePullRequest(body: ByteArray): PullRequestFields? {
-    val root = try {
-        Json.parseToJsonElement(body.decodeToString()).jsonObject
-    } catch (_: Exception) {
-        return null
-    }
-    val action = root["action"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() } ?: return null
-    val repository = root["repository"]?.jsonObject
-        ?.get("full_name")
-        ?.jsonPrimitive
-        ?.contentOrNull
-        ?.takeIf { it.isNotBlank() }
-        ?: return null
-    val pr = root["pull_request"]?.jsonObject ?: return null
-    val number = pr["number"]?.jsonPrimitive?.intOrNull
-        ?: root["number"]?.jsonPrimitive?.intOrNull
-        ?: return null
-    val headSha = pr["head"]?.jsonObject
-        ?.get("sha")
-        ?.jsonPrimitive
-        ?.contentOrNull
-        ?.takeIf { it.isNotBlank() }
-        ?: return null
-    val merged = pr["merged"]?.jsonPrimitive?.booleanOrNull
-    return PullRequestFields(
-        action = action,
-        repository = repository,
-        number = number,
-        headSha = headSha,
-        merged = merged,
-    )
-}

@@ -1,4 +1,4 @@
-package horizon.agent.webhook
+package horizon.agent.github
 
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.mock.MockEngine
@@ -22,15 +22,15 @@ class SupabaseEventAppenderTest {
     private val orgId = UUID.fromString("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
     private val streamId = streamIdFor(orgId, "acme/horizon", 9)
 
-    private val delivery = GithubDelivery(
+    private val observation = PullRequestObservation(
         orgId = orgId,
         streamId = streamId,
         eventType = PULL_REQUEST_EVENT,
         schemaVersion = 1,
         payload = Json.parseToJsonElement(
-            """{"delivery_id":"delivery-9","action":"opened","repository":"acme/horizon","pull_request":9,"head_sha":"abc"}""",
+            """{"idempotency_key":"acme/horizon#9@abc:open","action":"opened","repository":"acme/horizon","pull_request":9,"head_sha":"abc"}""",
         ),
-        deliveryId = "delivery-9",
+        idempotencyKey = "acme/horizon#9@abc:open",
     )
 
     private fun appender(handler: MockRequestHandler) =
@@ -47,7 +47,7 @@ class SupabaseEventAppenderTest {
             assertEquals("writer-key", request.headers["apikey"])
             captured = (request.body as TextContent).text
             respond("\"appended\"", HttpStatusCode.OK, headersOf(HttpHeaders.ContentType, "application/json"))
-        }.append(delivery)
+        }.append(observation)
         val body = Json.parseToJsonElement(captured).jsonObject
         assertEquals(AppendResult.Appended, result)
         // One call: no version lookup, and never a direct table read or insert.
@@ -55,30 +55,30 @@ class SupabaseEventAppenderTest {
         assertEquals(setOf("p_org_id", "p_stream_id", "p_payload"), body.keys)
         assertEquals(orgId.toString(), body.getValue("p_org_id").jsonPrimitive.content)
         assertEquals(streamId.toString(), body.getValue("p_stream_id").jsonPrimitive.content)
-        assertEquals("delivery-9", body.getValue("p_payload").jsonObject.getValue("delivery_id").jsonPrimitive.content)
+        assertEquals("acme/horizon#9@abc:open", body.getValue("p_payload").jsonObject.getValue("idempotency_key").jsonPrimitive.content)
     }
 
     @Test
     fun reportsADuplicateOnlyWhenTheFunctionSaysSo() = runBlocking {
-        val result = appender { respond("\"duplicate\"", HttpStatusCode.OK) }.append(delivery)
+        val result = appender { respond("\"duplicate\"", HttpStatusCode.OK) }.append(observation)
         assertEquals(AppendResult.Duplicate, result)
     }
 
     @Test
-    fun aConflictIsAFailureSoGithubRedelivers(): Unit = runBlocking {
+    fun aConflictIsAFailureSoTheNextPollRetries(): Unit = runBlocking {
         val failing = appender { respond("""{"code":"23505"}""", HttpStatusCode.Conflict) }
-        assertFailsWith<IllegalStateException> { failing.append(delivery) }
+        assertFailsWith<IllegalStateException> { failing.append(observation) }
     }
 
     @Test
     fun aRejectedInsertIsAFailure(): Unit = runBlocking {
         val failing = appender { respond("""{"code":"42501"}""", HttpStatusCode.Forbidden) }
-        assertFailsWith<IllegalStateException> { failing.append(delivery) }
+        assertFailsWith<IllegalStateException> { failing.append(observation) }
     }
 
     @Test
     fun anUnknownResultIsAFailure(): Unit = runBlocking {
         val failing = appender { respond("\"maybe\"", HttpStatusCode.OK) }
-        assertFailsWith<IllegalStateException> { failing.append(delivery) }
+        assertFailsWith<IllegalStateException> { failing.append(observation) }
     }
 }
