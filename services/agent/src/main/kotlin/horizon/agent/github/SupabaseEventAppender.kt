@@ -1,4 +1,4 @@
-package horizon.agent.webhook
+package horizon.agent.github
 
 import io.ktor.client.HttpClient
 import io.ktor.client.request.header
@@ -22,14 +22,14 @@ import kotlinx.serialization.json.put
  * `horizon_writer` has INSERT on `events` and no SELECT, and a plain PostgREST insert
  * never sets `horizon.actor_id`, which the grant trigger needs. The function reads the
  * next version under a stream lock, sets the session settings, inserts, and reports
- * `appended` or `duplicate` (this `X-GitHub-Delivery` is already stored).
+ * `appended` or `duplicate` (this idempotency key is already stored).
  *
  * The writer key is a JWT with `role = horizon_writer` and `sub` = the actor id the
  * events are attributed to. Nothing in the request body names the actor or the version.
  *
- * Any other response is a failure and is thrown, so the webhook answers 500 and GitHub
- * redelivers. A version conflict cannot reach the client: the function serializes
- * appends to a stream, and a concurrent duplicate delivery gets `duplicate` on retry.
+ * Any other response is a failure and is thrown. The poller does not advance its cursor
+ * for that repository, so the next poll reads the same window again. A version conflict
+ * cannot reach the client: the function serializes appends to a stream.
  */
 class SupabaseEventAppender(
     private val http: HttpClient,
@@ -38,14 +38,14 @@ class SupabaseEventAppender(
 ) : EventAppender {
     private val endpoint = supabaseUrl.trimEnd('/') + "/rest/v1/rpc/append_pull_request_received"
 
-    override suspend fun append(delivery: GithubDelivery): AppendResult {
-        check(delivery.eventType == PULL_REQUEST_EVENT) {
-            "GitHub webhook appends $PULL_REQUEST_EVENT"
+    override suspend fun append(observation: PullRequestObservation): AppendResult {
+        check(observation.eventType == PULL_REQUEST_EVENT) {
+            "GitHub polling appends $PULL_REQUEST_EVENT"
         }
         val body = buildJsonObject {
-            put("p_org_id", delivery.orgId.toString())
-            put("p_stream_id", delivery.streamId.toString())
-            put("p_payload", delivery.payload)
+            put("p_org_id", observation.orgId.toString())
+            put("p_stream_id", observation.streamId.toString())
+            put("p_payload", observation.payload)
         }
         val response = http.post(endpoint) {
             contentType(ContentType.Application.Json)

@@ -130,7 +130,7 @@ CI makes an accepted decision binding on a pull request, and it writes the ADR l
 
 On the changed paths the command selects the decisions whose scope applies, runs the mechanical sensor compiled from each decision, and fails the check when one is violated. The model does not produce that verdict.
 
-The same run records the three relations above. Smallest version: a CI command that fails the job and appends one event per relation, carrying the pull request, the SHA, and the ADR ids. The command only knows the pull request it is running on. Other GitHub activity arrives later, on the webhook path in GitHub ingestion.
+The same run records the three relations above. Smallest version: a CI command that fails the job and appends one event per relation, carrying the pull request, the SHA, and the ADR ids. The command only knows the pull request it is running on. Other GitHub activity arrives later, on the polling path in GitHub ingestion.
 
 Repeated violations may open a proposal. They do not change the decision by themselves.
 
@@ -182,13 +182,13 @@ A team shares one log across repositories. One person can run the same loop in a
 
 ### GitHub ingestion
 
-A GitHub App on the organization sends HTTPS webhooks to `services/agent` on Render. The service checks `X-Hub-Signature-256`, treats `X-GitHub-Delivery` as idempotent, and appends to `events`. Supabase is the log. GitHub does not call Supabase.
+`services/agent` on Render pulls pull requests from GitHub. GitHub does not call Horizon and does not call Supabase. On an interval (default 60 seconds) the service lists the pull requests of each repository in `GITHUB_REPOSITORIES` through the GitHub REST API, with a read-only token (`GITHUB_TOKEN`: a fine-grained token or a GitHub App installation token with "Pull requests" read access), and appends to `events`. Supabase is the log. ADR-0008 records the choice.
 
-The subscribed webhook event type is `pull_request` (all actions). Each new delivery appends one `PullRequestReceived` on stream type `pull_request`, one stream per `(org_id, repository full_name, pull request number)`. Other GitHub event types are acknowledged and not stored. The webhook does not append `CheckRecorded` and does not record `applies`, `cited`, or `violated`.
+Each pull request whose `(head SHA, state)` is new appends one `PullRequestReceived` on stream type `pull_request`, one stream per `(org_id, repository full_name, pull request number)`. `state` is `open`, `closed`, or `merged`. A comment or a label changes nothing that is stored. The idempotency key `{repository}#{number}@{head_sha}:{state}` is the dedupe, enforced in the database, so a restart or a repeated poll stores nothing twice. Only pull requests are read; other GitHub objects are not. The poller does not append `CheckRecorded` and does not record `applies`, `cited`, or `violated`.
 
 `CheckRecorded` is still appended by the CI command for that pull request, through the same append function.
 
-A one-time poll through that function loads history already on GitHub. The live feed is the webhook. Phase 1 appends `CheckRecorded` from CI and does not turn the webhook receiver on as a product requirement. Phase 3 turns the receiver on for `pull_request` → `PullRequestReceived`.
+The first poll has no cursor and loads the history GitHub still lists, up to a page limit. Later polls read only what changed since. Phase 1 appends `CheckRecorded` from CI and does not turn the poller on as a product requirement. Phase 3 turns the poller on for `pull_request` → `PullRequestReceived`.
 
 ## Phases
 
@@ -198,7 +198,7 @@ Each phase is a demo by itself. The first demo is one an architect recognizes.
 
 1. Event log and human approval of proposals. Discussion on the research view is not approval.
 2. Ingest existing ADRs into a decision stream: status, rejected alternatives, path globs.
-3. CI command on the pull request under test. It selects applicable decisions, runs the mechanical sensor, fails the job on `violated`, and appends `CheckRecorded` with the pull request, the SHA, the ADR ids, and `applies`, `cited`, or `violated`. The webhook receiver waits until phase 3.
+3. CI command on the pull request under test. It selects applicable decisions, runs the mechanical sensor, fails the job on `violated`, and appends `CheckRecorded` with the pull request, the SHA, the ADR ids, and `applies`, `cited`, or `violated`. The GitHub poller waits until phase 3.
 4. Research session the user leads. Deterministic retrieval, then a generated view. Every panel cites an event, a path, or a pull request. An uncited panel is invalid.
 5. The team discusses that view. An ADR draft is a proposal card on it. A human member accepts or rejects it.
 6. The React catalog is the first renderer of that view: decision map, implementation list, pull request library, gap list, proposal card.
@@ -214,7 +214,7 @@ Bootstrap (`AGENTS.md`, `.cursor/rules`, skill), verify (dead references, contra
 
 ### Phase 3 — Wider evidence
 
-The GitHub App webhook on `services/agent` is turned on for `pull_request` → `PullRequestReceived`. Review findings and `learned_from`. A human-confirmed "implements" claim, kept separate from `applies` / `cited` / `violated`. Cross-repo etalon rollout. A real Jev adapter for the proposals that need a mechanical check. Jira, Slack, and further agent runtimes are new event types when a team asks.
+The GitHub poller in `services/agent` is turned on for `pull_request` → `PullRequestReceived`. Review findings and `learned_from`. A human-confirmed "implements" claim, kept separate from `applies` / `cited` / `violated`. Cross-repo etalon rollout. A real Jev adapter for the proposals that need a mechanical check. Jira, Slack, and further agent runtimes are new event types when a team asks.
 
 ## Out of scope
 
@@ -242,7 +242,7 @@ The GitHub App webhook on `services/agent` is turned on for `pull_request` → `
 - Does the research brief live only on the proposal payload, or is the generated view its own stream?
 - Are comments in the discussion step events, or are they outside the log until someone turns one into a proposal?
 - When Jev gets a real adapter, which proposals must pass that mechanical check before a human can approve: ADR acceptance, harness compile, or both?
-- Phase 3 turns on the `pull_request` webhook (`PullRequestReceived`). Are any further GitHub event types subscribed later, or does ingestion stay at pull requests only?
+- Phase 3 turns on the `pull_request` poll (`PullRequestReceived`). Does the poller read further GitHub objects later, or does ingestion stay at pull requests only?
 
 ## Sources
 

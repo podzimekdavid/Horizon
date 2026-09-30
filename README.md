@@ -29,7 +29,7 @@ flowchart LR
 ```mermaid
 flowchart LR
     Web["apps/web<br/>React"] -->|member events| Log[("events<br/>append-only")]
-    GH["GitHub PR"] -->|webhook| Agent["services/agent<br/>Kotlin · Koog"]
+    Agent["services/agent<br/>Kotlin · Koog"] -->|"polls PRs"| GH["GitHub PR"]
     CI["CI check"] -->|CheckRecorded| Log
     Agent -->|"ProposalCreated<br/>DecisionProposed"| Log
 
@@ -53,7 +53,7 @@ flowchart LR
 | Path | What |
 |---|---|
 | `supabase/` | Migrations, seed, config |
-| `services/agent/` | Kotlin, Ktor, Koog: commands, AI, GitHub webhook |
+| `services/agent/` | Kotlin, Ktor, Koog: commands, AI, GitHub pull request poller |
 | `apps/web/` | Vite, React, TypeScript (planned) |
 | `cli/` | `horizon append` / `horizon list` |
 | `docker/` | Local Supabase stack via compose |

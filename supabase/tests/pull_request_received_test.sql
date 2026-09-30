@@ -56,34 +56,34 @@ select is(
   public.append_pull_request_received(
     'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb4',
     'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb5',
-    '{"delivery_id":"d-1","action":"opened","actor_id":"bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb3"}'::jsonb
+    '{"idempotency_key":"d-1","state":"open","actor_id":"bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb3"}'::jsonb
   ),
   'appended',
-  'a first delivery appends'
+  'a first observation appends'
 );
 select is(
   public.append_pull_request_received(
     'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb4',
     'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb5',
-    '{"delivery_id":"d-2","action":"synchronize"}'::jsonb
+    '{"idempotency_key":"d-2","state":"closed"}'::jsonb
   ),
   'appended',
-  'a second delivery on the stream appends'
+  'a second observation on the stream appends'
 );
 select is(
   public.append_pull_request_received(
     'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb4',
     'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb5',
-    '{"delivery_id":"d-2","action":"synchronize"}'::jsonb
+    '{"idempotency_key":"d-2","state":"closed"}'::jsonb
   ),
   'duplicate',
-  'a repeated X-GitHub-Delivery is reported as a duplicate'
+  'a repeated idempotency key is reported as a duplicate'
 );
 select throws_ok(
   $$select public.append_pull_request_received(
       'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb4',
       'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb9',
-      '{"delivery_id":"d-3","action":"opened"}'::jsonb
+      '{"idempotency_key":"d-3","state":"open"}'::jsonb
     )$$,
   '22023',
   null,
@@ -95,7 +95,7 @@ select throws_ok(
   $$select public.append_pull_request_received(
       'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb4',
       'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb6',
-      '{"delivery_id":"d-4","action":"opened"}'::jsonb
+      '{"idempotency_key":"d-4","state":"open"}'::jsonb
     )$$,
   '42501',
   null,
@@ -116,7 +116,7 @@ select results_eq(
 select is(
   (select count(*)::int from public.events where event_type = 'PullRequestReceived'),
   2,
-  'the duplicate and the refused deliveries stored nothing'
+  'the duplicate and the refused appends stored nothing'
 );
 
 select * from finish();

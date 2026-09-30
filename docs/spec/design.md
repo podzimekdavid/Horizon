@@ -9,6 +9,7 @@ apps/web  --user JWT-->  supabase projections (select)
 apps/web  --user JWT-->  approve_proposal / reject_proposal / DiscussionNoted
 apps/web  --user JWT-->  services/agent
 services/agent  --horizon_writer-->  supabase.events
+services/agent  --read-only token-->  GitHub REST (pull requests, polled)
 GitHub Action --> CI command --horizon_ci-->  CheckRecorded
 ```
 
@@ -94,7 +95,9 @@ A direct insert of `ProposalApproved`, `DecisionAccepted`, `DecisionRejected`, `
 
 ## Pull request stream identity
 
-One `pull_request` stream per `(org_id, repository, pull_request)`, written only by the GitHub webhook receiver through `append_pull_request_received`. Its `stream_id` is a UUIDv3 of a name that starts with the stream type, so it never equals the check stream's UUIDv5 for the same pull request. The function reads the next version under a per-stream lock, dedupes on `payload.delivery_id`, and refuses a stream id that belongs to another stream type.
+One `pull_request` stream per `(org_id, repository, pull_request)`, written only by the GitHub poller in `services/agent` through `append_pull_request_received` (ADR-0008). Its `stream_id` is a UUIDv3 of a name that starts with the stream type, so it never equals the check stream's UUIDv5 for the same pull request. The function reads the next version under a per-stream lock, dedupes on `payload.idempotency_key`, and refuses a stream id that belongs to another stream type.
+
+`payload.idempotency_key` is `{repository}#{number}@{head_sha}:{state}`, with `state` one of `open`, `closed`, `merged`. The payload also has `repository`, `pull_request`, `head_sha`, `state`, `merged`, and `updated_at`.
 
 ## Check identity
 
