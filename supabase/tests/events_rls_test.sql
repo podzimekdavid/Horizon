@@ -1,6 +1,10 @@
 begin;
 select plan(14);
 
+-- pgTAP lives in the extensions schema. Roles that switch in with `set local role` need to see it.
+-- Rolled back with the test, so the database keeps its real grants.
+grant usage on schema extensions to horizon_writer, horizon_ci;
+
 insert into auth.users (id, email)
 values
   ('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1', 'member-test@horizon.local'),

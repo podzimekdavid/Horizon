@@ -1,6 +1,10 @@
 begin;
 select plan(10);
 
+-- pgTAP lives in the extensions schema. Roles that switch in with `set local role` need to see it.
+-- Rolled back with the test, so the database keeps its real grants.
+grant usage on schema extensions to horizon_writer, horizon_ci;
+
 select set_config('horizon.actor_id', 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb1', true);
 
 insert into public.events (

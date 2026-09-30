@@ -4,10 +4,15 @@ set -euo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$root"
 
-set -a
-# shellcheck disable=SC1091
-source docker/.env
-set +a
+# docker/.env is a Compose env file, not shell: values such as `Default Organization` are unquoted,
+# so `source` breaks on them. Read only the variables this script needs.
+env_value() {
+  sed -n "s/^$1=//p" docker/.env | tail -n 1
+}
+
+SUPABASE_PUBLIC_URL="$(env_value SUPABASE_PUBLIC_URL)"
+SUPABASE_PUBLISHABLE_KEY="$(env_value SUPABASE_PUBLISHABLE_KEY)"
+ANON_KEY="$(env_value ANON_KEY)"
 
 export HORIZON_SUPABASE_URL="${SUPABASE_PUBLIC_URL:?}"
 export HORIZON_SUPABASE_PUBLISHABLE_KEY="${SUPABASE_PUBLISHABLE_KEY:-${ANON_KEY:?}}"
