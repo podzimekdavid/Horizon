@@ -107,3 +107,20 @@ class: hz gap
 <!--
 About ten seconds. This is the check on pull request 10. It failed, and the job name is the decision it broke.
 -->
+
+---
+layout: none
+class: hz gap
+---
+
+<div class="kicker">The record</div>
+
+# The decision names the pull request.
+
+<div class="shots">
+  <img class="wide" src="/decisions.png" alt="Horizon decisions view, ADR-0004 violated by pull request 10" />
+</div>
+
+<!--
+About ten seconds. The same pull request shows up on the decision. ADR-0004 lists pull request 10 and the file it broke.
+-->

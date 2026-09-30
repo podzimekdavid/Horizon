@@ -290,6 +290,10 @@
   border-radius: 0.45rem;
 }
 
+.shots img.wide {
+  width: min(100%, 42rem);
+}
+
 .hz.close {
   display: flex;
   flex-direction: column;
