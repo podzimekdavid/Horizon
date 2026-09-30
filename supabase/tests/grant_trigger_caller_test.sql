@@ -40,7 +40,7 @@ select lives_ok(
     ) values (
       'cccccccc-cccc-4ccc-8ccc-ccccccccccc4',
       'cccccccc-cccc-4ccc-8ccc-ccccccccccc5',
-      'proposal', 1, 'ProposalCreated', 1, '{}'::jsonb,
+      'pull_request', 1, 'PullRequestReceived', 1, '{}'::jsonb,
       'cccccccc-cccc-4ccc-8ccc-ccccccccccc1'
     )$$,
   'postgres may check horizon.grant_role for a definer command'
@@ -56,7 +56,7 @@ select throws_ok(
     ) values (
       'cccccccc-cccc-4ccc-8ccc-ccccccccccc4',
       'cccccccc-cccc-4ccc-8ccc-ccccccccccc6',
-      'proposal', 1, 'ProposalCreated', 1, '{}'::jsonb,
+      'pull_request', 1, 'PullRequestReceived', 1, '{}'::jsonb,
       'cccccccc-cccc-4ccc-8ccc-ccccccccccc1'
     )$$,
   '42501',

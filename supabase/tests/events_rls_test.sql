@@ -151,7 +151,10 @@ select is_empty(
   'a user outside the organization reads no events'
 );
 
+reset role;
+grant usage on schema extensions to horizon_writer;
 set local role horizon_writer;
+set local search_path = public, extensions;
 select set_config('horizon.actor_id', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1', true);
 select throws_ok(
   $$insert into public.events (

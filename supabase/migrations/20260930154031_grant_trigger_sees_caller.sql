@@ -9,9 +9,11 @@
 --   authenticated                    -> actor is auth.uid()
 --   horizon_writer, horizon_ci       -> actor is horizon.actor_id
 --   postgres, supabase_admin         -> actor is horizon.actor_id, and horizon.grant_role names the
---                                       role to check (approve_proposal, append_pull_request_received)
+--                                       role to check (approve_proposal, append_pull_request_received,
+--                                       append_check_recorded)
 -- Only the grants lookup needs owner rights, because event_type_grants is closed to every client
 -- role. That lookup moves into a small definer helper. The trigger's decision rules are unchanged.
+-- The version is not 20260930160000: that version belongs to the CI check migration.
 
 create or replace function private.event_type_granted(p_role text, p_event_type text)
 returns boolean
@@ -44,8 +46,9 @@ declare
 begin
   grant_role := current_user;
 
-  -- Security-definer commands (approve_proposal, append_pull_request_received) run as postgres and
-  -- set this. A member JWT cannot assume the postgres role, so the setting is ignored for them.
+  -- Security-definer commands (approve_proposal, append_pull_request_received,
+  -- append_check_recorded) run as postgres and set this. A member JWT cannot assume
+  -- the postgres role, so the setting is ignored for them.
   if current_user in ('postgres', 'supabase_admin')
     and coalesce(current_setting('horizon.grant_role', true), '') <> '' then
     grant_role := current_setting('horizon.grant_role', true);

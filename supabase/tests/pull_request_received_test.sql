@@ -1,4 +1,5 @@
 begin;
+grant usage on schema extensions to horizon_writer;
 select plan(10);
 
 select set_config('horizon.actor_id', 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb1', true);
