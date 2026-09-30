@@ -182,13 +182,13 @@ A team shares one log across repositories. One person can run the same loop in a
 
 ### GitHub ingestion
 
-A GitHub App on the organization sends HTTPS webhooks to `services/agent` on Render. The service checks `X-Hub-Signature-256`, treats `X-GitHub-Delivery` as idempotent, keeps the subscribed event types, and appends to `events`. Supabase is the log. GitHub does not call Supabase.
+A GitHub App on the organization sends HTTPS webhooks to `services/agent` on Render. The service checks `X-Hub-Signature-256`, treats `X-GitHub-Delivery` as idempotent, and appends to `events`. Supabase is the log. GitHub does not call Supabase.
 
-Which event types the App subscribes to is still open.
+The subscribed webhook event type is `pull_request` (all actions). Each new delivery appends one `PullRequestReceived` on stream type `pull_request`, one stream per `(org_id, repository full_name, pull request number)`. Other GitHub event types are acknowledged and not stored. The webhook does not append `CheckRecorded` and does not record `applies`, `cited`, or `violated`.
 
-`CheckRecorded` is still appended by the CI command for that pull request, through the same append function. The webhook does not record `applies`, `cited`, or `violated`.
+`CheckRecorded` is still appended by the CI command for that pull request, through the same append function.
 
-A one-time poll through that function loads history already on GitHub. The live feed is the webhook. Phase 1 appends `CheckRecorded` from CI and does not run the receiver. Phase 3 turns the receiver on for the event types chosen by then.
+A one-time poll through that function loads history already on GitHub. The live feed is the webhook. Phase 1 appends `CheckRecorded` from CI and does not turn the webhook receiver on as a product requirement. Phase 3 turns the receiver on for `pull_request` → `PullRequestReceived`.
 
 ## Phases
 
@@ -214,7 +214,7 @@ Bootstrap (`AGENTS.md`, `.cursor/rules`, skill), verify (dead references, contra
 
 ### Phase 3 — Wider evidence
 
-The GitHub App webhook on `services/agent` appends the event types chosen by then. Review findings and `learned_from`. A human-confirmed "implements" claim, kept separate from `applies` / `cited` / `violated`. Cross-repo etalon rollout. A real Jev adapter for the proposals that need a mechanical check. Jira, Slack, and further agent runtimes are new event types when a team asks.
+The GitHub App webhook on `services/agent` is turned on for `pull_request` → `PullRequestReceived`. Review findings and `learned_from`. A human-confirmed "implements" claim, kept separate from `applies` / `cited` / `violated`. Cross-repo etalon rollout. A real Jev adapter for the proposals that need a mechanical check. Jira, Slack, and further agent runtimes are new event types when a team asks.
 
 ## Out of scope
 
@@ -242,7 +242,7 @@ The GitHub App webhook on `services/agent` appends the event types chosen by the
 - Does the research brief live only on the proposal payload, or is the generated view its own stream?
 - Are comments in the discussion step events, or are they outside the log until someone turns one into a proposal?
 - When Jev gets a real adapter, which proposals must pass that mechanical check before a human can approve: ADR acceptance, harness compile, or both?
-- Which GitHub webhook event types does phase 3 subscribe to?
+- Phase 3 turns on the `pull_request` webhook (`PullRequestReceived`). Are any further GitHub event types subscribed later, or does ingestion stay at pull requests only?
 
 ## Sources
 
