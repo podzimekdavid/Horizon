@@ -277,6 +277,19 @@
   font-style: italic;
 }
 
+.shots {
+  display: flex;
+  justify-content: center;
+  margin-top: 0.7rem;
+}
+
+.shots img {
+  display: block;
+  width: min(100%, 34rem);
+  height: auto;
+  border-radius: 0.45rem;
+}
+
 .hz.close {
   display: flex;
   flex-direction: column;
