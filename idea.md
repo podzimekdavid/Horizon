@@ -1,141 +1,214 @@
 # Horizon
 
-Horizon is a team system that compiles an architectural decision into the harness a coding agent actually runs, then proposes a change when code, review, or an eval shows that harness no longer holds.
+Horizon is the workspace where an architect researches the system, writes and evolves ADRs, and sees those decisions against the code and the pull requests that implement them. An accepted decision is compiled into the harness coding agents run. When the code, a review, or an eval shows drift, Horizon proposes the next change. A human approves it.
 
 Pitch:
 
-> Log4brains tells a human which decision was made. Rulesync copies that markdown into every tool. Horizon compiles the decision into the harness the agent runs, and proposes an update when the code or a review shows the harness has drifted.
+> The architect asks what the system decided, sees where that decision lives in the code and in open pull requests, and accepts or supersedes the ADR in the same view. Agents then run the harness compiled from that decision, and the next pull request shows up on it.
 
-This is the first product draft. It records the idea, the wedge, and the order in which to build it. Phase 1 below matches the implementation boundary already drafted in `.cursor/rules/` on `cursor/horizon-agent-rules`.
+This draft restores the architect workspace as the product. The harness loop is how a decision stays executable. The Cursor rules on `cursor/horizon-agent-rules` still fence phase 1 to harness streams only (no decisions, no pull requests, no graph). That fence is narrower than this draft. Update those rules before implementation follows this spec.
 
 ## Problem
 
-Three piles of files are supposed to steer coding agents, and none of them stays true:
+Architects already do this work. The tools split it into tabs that do not share a record.
 
-- **Decisions** (ADRs) say what the team chose and what it rejected. Most architectural choices never become an ADR. They happen in a chat and disappear. Teams that do write ADRs usually abandon them within weeks or months, because authoring sits outside the work of shipping.
-- **Harness** (rules, skills, prompts, hooks) is how an agent is told to behave. `CLAUDE.md` and `.cursorrules` are context, not enforced configuration. Adherence drops as a session gets longer. A 2026 study of 679 rule files and 5 000+ Claude Code runs found that random rules raise task success about as much as expert-written ones (+13.8 pp). Negative constraints help. Positive directives ("follow the code style") tend to hurt. Context files often raise cost by more than 20 % without a better result. ([Guardrails Beat Guidance](https://arxiv.org/html/2604.11088))
-- **Evidence** (pull requests, review comments, CI, agent sessions) is what actually happened. It is not linked back to the decision or the rule that was supposed to govern it.
+- **Research.** "What did we decide about payments, what did we reject, and which service actually does it?" The answer is spread across ADRs, old pull requests, and chat. Most architectural choices never become an ADR at all.
+- **ADR development.** Writing the record sits beside the decision. Teams abandon the practice within weeks or months. Dedup, if it happens, is a person noticing two files that sound alike.
+- **Overview.** A lead engineer cannot open one view of the architecture: accepted decisions, the paths they govern, the pull requests touching those paths, and the gaps (a decision with no implementation, an implementation with no decision). Current ADR tools are per-repo TUI or markdown.
+- **Execution.** Even a good ADR is context, not a constraint. Agents violate it unless a harness sensor fires. Reviews and pull requests are not linked back onto the decision they confirm or break.
 
-Harness engineering already has a name. Birgitta Böckeler describes guides (feedforward: `AGENTS.md`, skills, conventions) and sensors (feedback: linters, types, tests) and notes that they are scattered across delivery, with room for tooling that configures, syncs, and reasons about them as one system. ([Harness engineering for coding agent users](https://martinfowler.com/articles/harness-engineering.html), April 2026)
-
-An etalon of "best practice" prose is the wrong object to curate. The object is a decision compiled into a short guardrail or a mechanical sensor, plus a measurement of whether that artifact still earns its tokens.
+Harness engineering names the last gap. Guides (`AGENTS.md`, skills) and sensors (linters, types, tests) are scattered across delivery. ([Harness engineering for coding agent users](https://martinfowler.com/articles/harness-engineering.html), April 2026.) A 2026 study of 679 rule files found that random rules raise task success about as much as expert-written ones, negative constraints help, and positive directives tend to hurt. ([Guardrails Beat Guidance](https://arxiv.org/html/2604.11088)) The architect's etalon is a decision compiled into a short guardrail or a mechanical sensor, not a pack of best-practice prose.
 
 ## What already exists
 
-The space around each pile is occupied. The joint organism is not.
-
 | Layer | Who is there | What they stop at |
 |---|---|---|
-| Decision records for agents | [adrkit](https://adrkit.dev/), [adr-kit](https://github.com/rvdbreemen/adr-kit), [adr-warden](https://libraries.io/npm/adr-warden) | Typed ADRs, path scope, read-only MCP, regex or rubric checks, staleness. Per repository. |
-| Team knowledge from ADR, Slack, and review | [Harbor](https://gethrbr.com/blog/architecture-decision-records-for-ai-agents) | Facts, supersession proposed to an owner, citation counts. |
-| Format sync | Rulesync and similar compilers | One markdown file written out as Cursor, Claude, Codex, Copilot files. |
-| Rule eval | [optirule](https://github.com/BaconMan1168/optirule) | A/B replay from git history, leave-one-out, single-player CLI. |
-| Agent output eval | Promptfoo, Braintrust, Langfuse | The agent's answer, not the harness artifact. |
-| Enterprise agent governance | Credo AI, HiddenLayer, and others | Security and policy for a CISO buyer. |
+| Decision records for agents | [adrkit](https://adrkit.dev/), [adr-kit](https://github.com/rvdbreemen/adr-kit), [adr-warden](https://libraries.io/npm/adr-warden) | Typed ADRs, path scope, read-only MCP, regex or rubric checks, staleness. Per repository. The architect's UI is a terminal, a Mermaid map, or a CI comment. |
+| Team knowledge from ADR, Slack, and review | [Harbor](https://gethrbr.com/blog/architecture-decision-records-for-ai-agents) | Facts and supersession proposed to an owner. |
+| Format sync | Rulesync and similar compilers | One markdown file written out for several agents. |
+| Rule eval | [optirule](https://github.com/BaconMan1168/optirule) | Whether a rule file changed behaviour. Single-player CLI. |
+| Agent-driven UI | [A2UI](https://a2ui.org/) | A declarative catalog the agent fills and the client renders. No architecture product on top. |
 
-adr-kit already compiles a decision into a mechanical check inside one repo. optirule already measures whether a rule file changed behaviour. Nobody keeps the decision, the compiled harness, and the evidence in one log, then proposes the next decision from that evidence across a team's repositories.
+Nobody gives the architect one workspace that researches the current system, develops the ADR, shows implementation and pull-request links, and compiles the accepted decision into the agent harness.
 
 ## Product
 
-A human accepts a decision. Horizon compiles the harness surfaces that should carry it: a path-scoped negative rule, a short skill, a prompt fragment, or a CI sensor. Usage, review, and eval write evidence back. When evidence says the decision is stale, two decisions collide, or a rule is harmful, Horizon proposes a supersession or a harness edit. A human approves. The accepted change is a new event. Projections rebuild from the log.
+Two loops, one log.
 
-The graph is a projection. It is not the source of truth.
+**Architect loop.** Research the area, draft or supersede the ADR, see paths and pull requests, approve.
 
-### Three kinds of knowledge
+**Harness loop.** Compile the accepted decision into rules, skills, and sensors. Eval whether they earn their tokens. Propose an edit when they do not.
 
-- **Decision.** Why it holds, what was rejected, which paths it governs. A decision with no sensor is a request. History is kept. Dedup means a supersession link or a consolidation proposal ("ADR-007 and ADR-012 cover the same topic and differ in one constraint"), with a structured diff and citations. It does not mean deleting the older record.
-- **Harness artifact.** Rule, skill, prompt, or hook. Each one cites the decision it was compiled from. A rule that cites no decision is debt.
-- **Evidence.** A pull request, a review finding, a CI result, an eval. A `learned_from` edge records which evidence triggered a proposed change.
+The graph is a projection of the event log. It is not the source of truth. The model may draft a brief, an ADR, or a link interpretation. It does not accept a decision, and it does not judge compliance. Schema, lint, hooks, and tests produce verdicts.
+
+### A session
+
+1. The architect opens "payments boundary".
+2. The overview shows ADR-012 (accepted), the rejected alternative "shared database", the modules under `src/payments`, three open pull requests whose diffs touch those paths, and a gap: ADR-004 governs no path.
+3. They ask whether pull request 481 contradicts ADR-012.
+4. Research returns a brief. Every claim cites a decision, a path, or a pull request. The agent proposes a superseding ADR or a review note.
+5. The architect accepts the ADR. The harness recompiles the constraint. Pull request 481 stays on the decision as an observed touch until someone confirms that it implements or conflicts.
+
+### Architect workspace
+
+#### Research engine
+
+The engine answers questions about this system. It is not a web search box and not a chat that invents architecture.
+
+It must answer:
+
+- What is currently decided about this area, and which alternatives were rejected?
+- Which modules and paths implement it?
+- Which open and merged pull requests touch those paths?
+- Where does the code diverge from the decision?
+- Which existing decisions overlap or conflict with the draft I am about to write?
+- What is missing: a governed path with no decision, or a decision with no path?
+
+Two passes:
+
+1. **Retrieval is deterministic.** Status, supersession chain, path match, and pull-request intersection come from the projection. No model in this pass.
+2. **The brief is written by the model, and every sentence cites a decision, a path, or a pull request.** Uncited sentences are dropped. The brief is attached to a proposal. It is not a second source of truth.
+
+The same engine runs before a new ADR is drafted, so a duplicate or a conflict shows up while the architect is still researching.
+
+#### ADR development
+
+The record is written from the research brief, or from a gap the overview already shows (a pull request that decided something, a boundary with no ADR).
+
+The agent drafts context, the decision, rejected alternatives, consequences, and the paths it should govern. The architect edits and accepts. Acceptance is `DecisionAccepted`. A later change is a supersession or a consolidation proposal ("ADR-007 and ADR-012 cover the same topic and differ in one constraint"), shown as a structured diff with both constraints visible. History stays. Dedup does not delete the older record.
+
+Status is `proposed`, `accepted`, `rejected`, or `superseded`. Superseded records stay readable, including the alternatives they rejected.
+
+#### Agentic overview
+
+The overview is a surface the agent fills. The web app renders it from a fixed catalog. The agent picks components and data from that catalog. It does not generate UI code. That is the A2UI shape: declarative, catalog-limited, client-rendered ([A2UI](https://a2ui.org/), production spec v0.9.1, v1.0 still a candidate). Phase 1 renders the catalog in the React app. Speaking the A2UI wire protocol waits until the same surface is worth opening in another client.
+
+Catalog for the first overview:
+
+| Component | What it shows |
+|---|---|
+| Decision map | Accepted, proposed, and superseded decisions for the area |
+| Implementation list | Paths and modules the decision governs |
+| Pull request list | Open and merged pull requests, each marked `touches`, `implements`, or `conflicts` |
+| Gap list | Decision with no path, path or pull request with no decision |
+| Proposal card | The draft ADR or harness edit, with approve and reject |
+
+The same projection is visible without a model call. The agent rearranges and explains it. The chat is how the architect asks. The overview is where they work.
+
+#### Links to implementations and pull requests
+
+Links are edges, not a paragraph inside the ADR.
+
+| Edge | Meaning | How it is recorded |
+|---|---|---|
+| `governs` | Decision → path glob or module | On the decision, confirmed by the architect |
+| `touches` | Pull request diff intersects a governed path | Observed. Recomputed from GitHub. No model |
+| `implements` / `conflicts` | The pull request carries or breaks the decision | Interpretation. A proposal until a human confirms |
+| `compiled_to` | Decision → rule, skill, prompt, or sensor | Written when the harness is compiled |
+| `learned_from` | Evidence → the proposal it triggered | Written with the proposal |
+
+"This pull request changed a governed path" is a fact. "This pull request implements the decision" is a claim.
+
+### Harness loop
+
+An accepted decision compiles the surfaces that should carry it: a path-scoped negative rule, a short skill, a prompt fragment, or a CI sensor. A rule that cites no decision is debt. A decision with no sensor is a request the agent can ignore.
+
+Eval replays tasks from git history and labels an artifact `helpful`, `harmful`, or `inert`, with token cost. A harmful rule becomes a proposal to drop or edit it. The architect approves. The projection rebuilds from the new event.
+
+Coding agents read the current decision through retrieval (`search_decisions`, `get_constraints_for_paths`, `get_rejected_alternatives`), scoped to the paths in play. The corpus is not pasted into every prompt.
 
 ### Event log
 
-Append-only. Schema-validated. Replayable without a model. The model may author a candidate. It does not approve one, and it does not judge correctness. Deterministic checks (schema, lint, hook, test) produce verdicts. Auto-generated rule checkers miss violations often enough that a model must not be the compliance judge.
-
-Illustrative events:
+Append-only. Schema-validated. Replayable without a model.
 
 | Event | Who records it | What follows |
 |---|---|---|
-| `DecisionAccepted` | A human, after an agent draft | A constraint, including rejected alternatives |
-| `HarnessCompiled` | The compiler | A rule, skill, prompt, or CI sensor linked to that decision |
-| `ViolationDetected` | CI, a hook, or a review | Evidence the harness or the decision failed |
-| `EvalCompleted` | Replay of tasks from git history | `helpful`, `harmful`, or `inert`, plus token cost |
-| `ChangeProposed` | Drift detector or a model | Supersession, merge, or a harness edit |
-| `ChangeApproved` | A human | A new decision version and a recompiled harness |
+| `DecisionProposed` | Agent or architect | A draft attached to a research brief |
+| `DecisionAccepted` | A human | The current constraint, rejected alternatives, and governed paths |
+| `DecisionSuperseded` | A human, via a proposal | The old record stays, the new one governs |
+| `LinkConfirmed` | A human | `implements` or `conflicts` on a pull request |
+| `HarnessCompiled` | The compiler | A rule, skill, prompt, or sensor linked to the decision |
+| `ViolationDetected` | CI, a hook, or a review | Evidence the decision or the harness failed |
+| `EvalCompleted` | Replay from git history | `helpful`, `harmful`, or `inert`, plus token cost |
+| `ProposalApproved` / `ProposalRejected` | A human member | The accepted change is a separate event |
 
-Names in the table are the product language. Phase 1 uses the closed stream set in the event-log rule (`organization`, `membership`, `rule`, `skill`, `prompt`, `evaluation`, `proposal`) and the proposal sequence `ProposalCreated` → `ProposalVerified` → `ProposalApproved` or `ProposalRejected`.
+`touches` is not an event. It is a projection of path globs against pull request diffs.
+
+Proposal sequence for anything the model drafts: `ProposalCreated` → `ProposalVerified` → `ProposalApproved` or `ProposalRejected`. The agent service may record `ProposalCreated` and `ProposalVerified`. It must not record approval. Approval does not edit a projection by itself.
+
+The Cursor rules still close streams at `organization`, `membership`, `rule`, `skill`, `prompt`, `evaluation`, `proposal`. This draft adds `decision` and confirmed links. Observed pull requests can stay outside the log, as a projection fed by GitHub.
 
 ### Who it is for
 
-A team already running coding agents across more than one repo, with someone who currently checks by hand whether `AGENTS.md` still matches the decisions. One person uses the same loop inside a single repo: bootstrap from an etalon, verify, eval. The team layer adds a shared etalon, rollout, and an approval inbox across repositories.
+Architects and lead engineers are the primary users. They research an area, develop the ADR, and read the overview of decisions, implementations, and pull requests.
 
-Architects and lead engineers work in a web explorer and an inbox, approving proposals the way they approve a pull request. An agent-rendered UI (A2UI) can show a drift dashboard later. It is not the product.
+Coding agents are the second user. They retrieve the current decision and run the compiled harness.
+
+A team shares one log across repositories. One person can run the same loop in a single repo. Rollout of an etalon across repos is a staged proposal.
 
 ### Stack already chosen
 
-- `supabase/` — Postgres, Auth, RLS, Storage. The event table is the system of record. Projection tables are rebuilt from events.
-- `services/agent/` — Kotlin, Ktor, Koog. Custom commands and every model workflow. Koog memory stores agent checkpoints only.
-- `apps/web/` — Vite, React, TypeScript. Renders projections and sends commands a member is allowed to record.
+- `supabase/` — Postgres, Auth, RLS, Storage. The event table is the system of record. Projection tables, including observed pull-request coverage, are rebuilt from events and from GitHub.
+- `services/agent/` — Kotlin, Ktor, Koog. Research briefs, ADR drafts, harness compilation, and every model call. Koog memory stores agent checkpoints only.
+- `apps/web/` — Vite, React, TypeScript. Renders the architect catalog and sends commands a member is allowed to record.
 - Every tenant-owned row has `org_id`.
-- Jev (typesafe verification) is a port. Phase 1 ships `NotConfigured` and records that outcome on `ProposalVerified`.
+- Jev (typesafe verification) is a port. The first slice ships `NotConfigured` and records that outcome on `ProposalVerified`.
 
 ## Phases
 
-Each phase is a demo by itself.
+Each phase is a demo by itself. The first demo is one an architect recognizes.
 
-### Phase 1 — Harness loop
+### Phase 1 — Architect workspace on one repository
 
-In scope: rules, skills, prompts, evaluations, proposals. Decisions, pull requests, review findings, incidents, and a knowledge-graph product stay out. If a task needs one of them, stop and ask.
+1. Event log and human approval of proposals.
+2. Ingest existing ADRs into a decision stream: status, rejected alternatives, path globs.
+3. Observed `touches`: open pull requests whose diffs intersect those paths.
+4. Research query. Deterministic retrieval, then a cited brief.
+5. ADR draft from that brief. The architect accepts or rejects it in the proposal card.
+6. Overview catalog: decision map, implementation list, pull request list, gap list, proposal card. The React app renders it. The agent fills it.
+7. One accepted decision compiles one path-scoped negative rule, so the harness side of the log exists.
 
-1. Event schema and append-only log. Projections rebuild from events.
-2. One etalon. A TypeScript/Node service pack: one path-scoped negative rule, one short skill, one prompt fragment. The rule's rationale names the constraint it enforces. The decision stream itself is not built yet.
-3. `horizon init` writes `AGENTS.md`, `.cursor/rules`, and the skill.
-4. Verify: dead references, contradictions, token budget, drift against the repo.
-5. Eval on a handful of tasks from git history. Label each artifact `helpful`, `harmful`, or `inert`.
-6. Approval inbox. A proposal to drop or edit a harmful rule. A human approves. The agent service account cannot append approval.
+Demo line: the architect asks what governs payments, sees the ADR, the paths, and the open pull requests, accepts a supersession, and the compiled rule cites the new decision.
 
-Demo line: a rule entered the log, an eval said it does not earn its tokens, a human approved the removal, the projection updated from the new event.
+Day-one value, before any model spend: ingest the ADR directory and open pull requests, and show decisions with no path and pull requests that touch a governed path.
 
-Day-one value on an existing repo, before any eval spend: ingest current rules and skills and report which cite nothing, which contradict each other, and which blow the token budget.
+### Phase 2 — Harness loop on those decisions
 
-### Phase 2 — Decisions compile the harness
+Bootstrap (`AGENTS.md`, `.cursor/rules`, skill), verify (dead references, contradictions, token budget, drift), and eval (`helpful` / `harmful` / `inert`). Harmful artifacts come back to the same proposal card. Retrieval tools for coding agents: `search_decisions`, `get_constraints_for_paths`, `get_rejected_alternatives`.
 
-Add a decision stream. `DecisionAccepted` compiles `HarnessCompiled`. Read-only retrieval for agents: `search_decisions`, `get_constraints_for_paths`, `get_rejected_alternatives`.
+### Phase 3 — Confirmed evidence
 
-Demo line: the same task without the harness violates the decision; with the harness the agent cites it and the sensor catches a slip.
+Review findings, CI violations, and `learned_from`. Confirmed `implements` / `conflicts` beyond observed `touches`. Cross-repo etalon rollout. A real Jev adapter for the proposals that need it. Jira, Slack, and further agent runtimes are new event types when a team asks.
 
-Consolidation and supersession proposals land in the same inbox. A false merge of two similar decisions with different constraints is the failure mode to design against: the proposal shows both constraints side by side.
+## Out of scope
 
-### Phase 3 — Evidence from the lifecycle
-
-Link the software development lifecycle as an evidence spine. Three sources are enough: GitHub pull requests, CI, and agent sessions. That covers decision, harness, and what the agent did. Jira, Slack, and every agent runtime are further event types, added when a team asks for them.
-
-`ViolationDetected` and `learned_from` close the loop. Rollout of an etalon across repos is a staged proposal, not a silent push.
-
-## Out of scope for the product
-
-- A compiler whose main job is writing one instruction file into ten vendor formats. `AGENTS.md` is becoming the shared file. Sync is a commodity.
-- A model as the judge of whether a rule was followed.
-- Curated packs of positive "write the code like this" prose. Those packs are priming. The etalon holds constraints and sensors tied to a named decision.
-- An integration of every system in the lifecycle before the three sources above work.
-- Loading an entire ADR corpus into every agent prompt. Retrieval is path-scoped. Trust comes from the sensor, not from a longer prompt.
+- A compiler whose main job is writing one instruction file into ten vendor formats.
+- A model as the judge of whether a rule was followed, or as the author of an accepted decision.
+- Curated packs of positive "write the code like this" prose.
+- Pasting the ADR corpus into every agent prompt.
+- The A2UI wire protocol before the React catalog is the overview architects actually use.
+- Integrations beyond one Git host's pull requests, until phase 1 links are real.
 
 ## Risks
 
-- **Cold start.** An empty log has no value. Horizon starts from artifacts that already exist: ADRs in the repo, `AGENTS.md`, pull requests, CI. Writing a record beside the work is how earlier ADR tools died.
-- **A stale projection.** A decision nobody cites, and a rule with no eval, are shown as debt. They are not served as quiet truth.
-- **Platform absorption.** Cursor team rules, skills.sh benchmarks, and adr-kit's guardian can each close part of the loop inside one vendor or one repo. Horizon's position is cross-tool, and it is the only place the decision, the harness, and the evidence co-evolve.
-- **Eval cost and noise.** An agent run is slow and paid. Repeats and a real comparison (paired tests, confidence intervals) are part of the eval design. Phase 1 can demo the pipeline on a few tasks. It should show the spend before it starts.
-- **Scope.** Phase 1 is the harness loop. The decision compiler and the lifecycle evidence wait until that loop approves a real change from a real event.
+- **Cold start.** The first screen ingests ADRs and open pull requests that already exist. An empty log is not the demo.
+- **A stale overview.** A decision with no path, and a pull request that only `touches`, are shown as such. Observed touch is not labeled "implements".
+- **False ADR merges.** Two decisions that sound alike and constrain different things. The proposal shows both constraints side by side.
+- **Overview scope.** The catalog is five components. A new panel is a new component in that list, not a generated page.
+- **Research drift.** The brief cites the log. A sentence without a citation is dropped.
+- **The rules lag this draft.** Implementing phase 1 against the current Cursor rules would refuse the decision stream and the pull-request links. Update the rules first.
+- **Eval cost.** Phase 2 shows the spend before a replay starts.
 
 ## Open questions
 
-- Which single etalon is the hackathon story: TypeScript service, or a stack this team already has?
-- Does phase 1 store the constraint text inside the rule payload, or only a free-text rationale, until the decision stream exists?
-- What is the smallest eval that is honest: optirule-style replay, or a scripted pair of runs with the cost printed up front?
-- When Jev gets a real adapter, which proposals must pass it before a human can approve?
+- Phase 1 path links: parsed from ADR text, or confirmed by the architect on ingest?
+- Does the research brief live only on the proposal payload?
+- First overview: agent-filled catalog only, or the static projection beside it from the start? This draft says both, with the static projection always available.
+- When Jev gets a real adapter, which proposals must pass it before a human can approve: ADR acceptance, harness compile, or both?
 
 ## Sources
 
 - Böckeler, *Harness engineering for coding agent users*, martinfowler.com, April 2026.
 - *Guardrails Beat Guidance*, arXiv 2604.11088.
+- [A2UI](https://a2ui.org/), v0.9.1 current, v1.0 candidate as of June 2026.
 - adrkit, adr-kit, adr-warden, Harbor, optirule — as linked above.
