@@ -1,0 +1,33 @@
+---
+description: Kotlin Koog service boundaries for custom logic and AI proposals
+globs: services/agent/**/*
+alwaysApply: false
+---
+
+# Agent service
+
+`services/agent` is the only home for custom command logic and AI. Product memory is the Supabase event log. Koog's own persistence and memory store agent checkpoints only, never rules, skills, prompts, or evaluations.
+
+## Runtime
+
+- JDK 17 or newer. Depend on stable Koog modules (`ai.koog:koog-agents` 1.0.x). Add a beta module only when the stable API cannot do the job.
+- Host the HTTP API with Ktor.
+- Load the Supabase service role from the server environment. Do not log it or return it to `apps/web`.
+
+## Commands
+
+A command appends events. It does not `UPDATE` projection tables. Use the stream version for optimistic concurrency and retry on a version conflict.
+
+The service account may append `ProposalCreated` and `ProposalVerified`. It must refuse `ProposalApproved` and `ProposalRejected`.
+
+## Jev
+
+Call verification through a `DecisionVerifier` port. The phase-1 implementation returns `NotConfigured` and records that outcome on `ProposalVerified`. Do not add a TypeSafe HTTP client until a later phase says so.
+
+```kotlin
+// ❌ Koog memory is not the harness
+memory.write("rule", body)
+
+// ✅ the harness fact is an event
+eventStore.append(RuleUpdated(orgId, streamId, expectedVersion, body, actorId))
+```

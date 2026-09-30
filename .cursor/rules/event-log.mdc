@@ -1,0 +1,45 @@
+---
+description: Append-only event log is the source of truth; harness tables are rebuildable projections
+alwaysApply: true
+---
+
+# Event log
+
+The event table is the source of truth. Tables for rules, skills, prompts, evaluations, and proposals are projections. Fix a projection by rebuilding it from events, not by editing history.
+
+## Writes
+
+- Insert only. No `UPDATE` or `DELETE` policy on the event table.
+- Unique `(stream_id, version)` for optimistic concurrency.
+- Each event has `org_id`, `stream_id`, `stream_type`, `version`, `event_type`, `schema_version`, `payload`, `actor_id`, `occurred_at`.
+- Postgres updates projections (trigger or function). Application code does not `UPDATE` projection tables.
+
+## Closed stream types
+
+`organization`, `membership`, `rule`, `skill`, `prompt`, `evaluation`, `proposal`
+
+Name events in past-tense PascalCase (`RuleUpdated`) and set `schema_version`.
+
+## Where a command runs
+
+The web client may append an event only when RLS fully authorizes that write.
+
+Branching logic, model calls, and commands that touch more than one stream go through `services/agent`. That service still only appends events.
+
+```sql
+-- ❌ projection is not the source of truth
+update public.rules set body = '...' where id = '...';
+
+-- ✅ append the fact; the projection follows
+insert into public.events (
+  org_id, stream_id, stream_type, version, event_type, schema_version, payload, actor_id
+) values (
+  '...', '...', 'rule', 2, 'RuleUpdated', 1, '{"body":"..."}', '...'
+);
+```
+
+## Proposals
+
+`ProposalCreated` → `ProposalVerified` → `ProposalApproved` or `ProposalRejected`.
+
+The agent service may record `ProposalVerified`. Only a human member may record approval or rejection. Approval does not edit a projection by itself; the accepted change is a separate harness event.
