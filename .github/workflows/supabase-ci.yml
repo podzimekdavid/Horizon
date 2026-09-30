@@ -5,17 +5,58 @@ on:
   push:
     branches: [main]
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   test:
     runs-on: ubuntu-latest
     timeout-minutes: 40
+    env:
+      DOCKER_IMAGES_ARCHIVE: ${{ github.workspace }}/.ci-cache/docker-images.tar.zst
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: npm
+          cache-dependency-path: package-lock.json
+
       - run: npm ci
+
+      # Images are pinned by tag in docker/*.yml, so the key changes only when a tag changes.
+      - name: Restore Docker image cache
+        id: docker-images
+        uses: actions/cache/restore@v4
+        with:
+          path: .ci-cache/docker-images.tar.zst
+          key: docker-images-${{ runner.os }}-${{ hashFiles('docker/docker-compose.yml', 'docker/docker-compose.horizon.yml') }}
+
+      - name: Load cached Docker images
+        if: steps.docker-images.outputs.cache-hit == 'true'
+        run: bash scripts/ci-docker-images.sh load "$DOCKER_IMAGES_ARCHIVE"
+
+      - name: Pull and archive Docker images
+        if: steps.docker-images.outputs.cache-hit != 'true'
+        run: bash scripts/ci-docker-images.sh save "$DOCKER_IMAGES_ARCHIVE"
+
+      # Save right after the pull, not in a post step, so a failing test run still fills the cache.
+      - name: Save Docker image cache
+        if: steps.docker-images.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: .ci-cache/docker-images.tar.zst
+          key: docker-images-${{ runner.os }}-${{ hashFiles('docker/docker-compose.yml', 'docker/docker-compose.horizon.yml') }}
+
       - run: bash scripts/supabase-start.sh
       - run: bash scripts/db-test.sh
       - run: bash scripts/smoke-cli.sh
+
+      - name: Dump stack state
+        if: failure()
+        working-directory: docker
+        run: |
+          docker compose ps -a
+          docker compose logs --no-color --tail=200
