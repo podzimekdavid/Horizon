@@ -9,7 +9,7 @@ The event table is the source of truth. Tables for rules, skills, prompts, evalu
 
 ## Writes
 
-- Insert only. No `UPDATE` or `DELETE` policy on the event table.
+- Insert only. No client `UPDATE` or `DELETE` policy on `events` or on projection tables.
 - Unique `(stream_id, version)` for optimistic concurrency.
 - Each event has `org_id`, `stream_id`, `stream_type`, `version`, `event_type`, `schema_version`, `payload`, `actor_id`, `occurred_at`.
 - Postgres updates projections (trigger or function). Application code does not `UPDATE` projection tables.

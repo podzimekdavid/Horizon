@@ -23,7 +23,9 @@ Custom command logic and every AI workflow live in Kotlin with Koog (`services/a
 
 An AI result is a proposal. A human organization member approves it. The agent service account must not append `ProposalApproved` or directly change a rule, skill, prompt, or evaluation.
 
-Jev is a port in `services/agent` with a `NotConfigured` implementation. Do not call the TypeSafe API in this phase.
+A verification verdict comes from a schema check, a lint, a hook, or a test. A model must not judge compliance. `ProposalVerified` records that mechanical result, or `NotConfigured` when no such check exists.
+
+Jev is a `ProposalVerifier` port in `services/agent`. The phase-1 implementation returns `NotConfigured`. Do not call the TypeSafe API in this phase.
 
 ## Language
 

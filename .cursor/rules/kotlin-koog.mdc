@@ -22,7 +22,9 @@ The service account may append `ProposalCreated` and `ProposalVerified`. It must
 
 ## Jev
 
-Call verification through a `DecisionVerifier` port. The phase-1 implementation returns `NotConfigured` and records that outcome on `ProposalVerified`. Do not add a TypeSafe HTTP client until a later phase says so.
+Call verification through a `ProposalVerifier` port. It checks a proposal, not a decision. Phase 1 has no decision stream.
+
+The phase-1 implementation returns `NotConfigured` and records that outcome on `ProposalVerified`. Do not add a TypeSafe HTTP client in this phase. The port reports only a mechanical verdict (schema, lint, hook, or test) and must not call a model.
 
 ```kotlin
 // ❌ Koog memory is not the harness

@@ -6,7 +6,7 @@ alwaysApply: false
 
 # Supabase
 
-Supabase is the system of record. Confirm current behavior in the Supabase docs or the Supabase MCP `search_docs` tool before using an API, extension, or CLI flag.
+Supabase hosts the event log. The event table is the system of record. Projection tables are rebuildable read models, not a second record. Confirm current behavior in the Supabase docs or the Supabase MCP `search_docs` tool before using an API, extension, or CLI flag.
 
 ## Security
 
@@ -16,7 +16,8 @@ Supabase is the system of record. Confirm current behavior in the Supabase docs 
 - The service role stays in `services/agent`. Never commit it and never put it in `VITE_` or `NEXT_PUBLIC_` variables.
 - Views in Postgres 15+ use `security_invoker = true`.
 - Do not place `security definer` functions in an exposed schema.
-- An `UPDATE` policy needs a matching `SELECT` policy.
+- Do not create a client `UPDATE` or `DELETE` policy on `events` or on projection tables. Projections are written only by the Postgres function that folds events.
+- If a later table genuinely needs a client `UPDATE`, that policy also needs a `SELECT` policy. Without it, Postgres updates zero rows and returns no error.
 
 ## Schema change
 
