@@ -1,45 +1,64 @@
 ---
-description: Append-only event log is the source of truth; harness tables are rebuildable projections
+description: Append-only event log is the only record; projections are rebuilt by the fold
 alwaysApply: true
 ---
 
 # Event log
 
-The event table is the source of truth. Tables for rules, skills, prompts, evaluations, and proposals are projections. Fix a projection by rebuilding it from events, not by editing history.
+The event table is the only record. Projections are rebuilt from events by a Postgres fold. Fix a projection by rebuilding it from events, not by editing history.
 
 ## Writes
 
 - Insert only. No client `UPDATE` or `DELETE` policy on `events` or on projection tables.
-- Unique `(stream_id, version)` for optimistic concurrency.
+- Unique `(stream_id, version)` for optimistic concurrency. A version conflict is retried by the command, not patched.
 - Each event has `org_id`, `stream_id`, `stream_type`, `version`, `event_type`, `schema_version`, `payload`, `actor_id`, `occurred_at`.
-- Postgres updates projections (trigger or function). Application code does not `UPDATE` projection tables.
+- Postgres folds events into projections. Application code does not `UPDATE` projection tables.
 
-## Closed stream types
+## Insert trigger and grants
 
-`organization`, `membership`, `rule`, `skill`, `prompt`, `evaluation`, `proposal`
+A `BEFORE INSERT` trigger on `events`:
 
-Name events in past-tense PascalCase (`RuleUpdated`) and set `schema_version`.
+- sets `actor_id` from `auth.uid()` for a user JWT, or from the role session setting for `horizon_writer` and `horizon_ci`
+- ignores any `actor_id` in the payload
+- rejects an `event_type` that `event_type_grants` does not grant to the current role
+
+The service role has no grant rows, so the trigger rejects its runtime inserts. WP-01 owns the trigger and the grants table. Later packages insert grant rows and their own projection migrations; they do not edit the trigger.
+
+## Streams (phase 1)
+
+`organization`, `membership`, `proposal`, `decision`, `check`, `research_session`, `harness`
+
+Name events in past-tense PascalCase (`DecisionProposed`) and set `schema_version`.
+
+## Grants
+
+| Role | Event types |
+|---|---|
+| member (`authenticated`) | `ResearchSessionOpened`, `DiscussionNoted` |
+| `horizon_writer` | `ProposalCreated`, `ProposalVerified`, `DecisionProposed` |
+| `horizon_ci` | `CheckRecorded`, `ProposalCreated` of kind `review_violations` only |
+| `approve_proposal` / `reject_proposal` | `ProposalApproved` or `ProposalRejected`, plus the one domain event the kind names |
+
+`OrganizationCreated` and `MemberAdded` are seed and admin writes, not member inserts.
 
 ## Where a command runs
 
-The web client may append an event only when RLS fully authorizes that write.
-
-Branching logic, model calls, and commands that touch more than one stream go through `services/agent`. That service still only appends events.
+The web client appends only member-granted event types. Branching logic, model calls, and commands that touch more than one stream go through `services/agent`, which writes as `horizon_writer`.
 
 ```sql
 -- ❌ projection is not the source of truth
-update public.rules set body = '...' where id = '...';
+update public.decisions set status = 'accepted' where id = '...';
 
--- ✅ append the fact; the projection follows
+-- ✅ append the fact; the projection follows (actor_id is set by the trigger)
 insert into public.events (
-  org_id, stream_id, stream_type, version, event_type, schema_version, payload, actor_id
+  org_id, stream_id, stream_type, version, event_type, schema_version, payload
 ) values (
-  '...', '...', 'rule', 2, 'RuleUpdated', 1, '{"body":"..."}', '...'
+  '...', '...', 'decision', 1, 'DecisionProposed', 1, '{"adr_id":"ADR-001"}'
 );
 ```
 
 ## Proposals
 
-`ProposalCreated` → `ProposalVerified` → `ProposalApproved` or `ProposalRejected`.
+`ProposalCreated` → `ProposalVerified` → `approve_proposal` or `reject_proposal`.
 
-The agent service may record `ProposalVerified`. Only a human member may record approval or rejection. Approval does not edit a projection by itself; the accepted change is a separate harness event.
+`approve_proposal` appends `ProposalApproved` and the domain event for the kind (`DecisionAccepted`, `DecisionSuperseded`, or `HarnessCompiled`) in one transaction. A direct insert of those event types fails the trigger — neither the browser nor `horizon_writer` can append them. `DiscussionNoted` is not approval.

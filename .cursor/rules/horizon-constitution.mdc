@@ -5,7 +5,24 @@ alwaysApply: true
 
 # Horizon
 
-Horizon is an event-sourced engineering memory. Phase 1 stores harness knowledge only: rules, skills, prompts, and evaluations. Decisions, pull requests, review findings, incidents, and a knowledge-graph product are out of scope. If a task needs one of them, stop and ask. Do not scaffold them.
+Horizon is an event-sourced engineering memory. Phase 1 stores decisions (ADRs), proposals, CI check results, research sessions, and one compiled harness sensor.
+
+## Phase 1 streams
+
+`organization`, `membership`, `proposal`, `decision`, `check`, `research_session`, `harness`
+
+## Forbidden in phase 1
+
+If a task needs one of these, stop and ask. Do not scaffold them.
+
+- A model as judge — a verdict is a schema check, a lint, a hook, or a test
+- Client `UPDATE` or `DELETE` of events or projection tables
+- Browser insert of `ProposalApproved` or `ProposalRejected` — approval goes through `approve_proposal` / `reject_proposal`
+- The Supabase service role as a runtime writer — runtime event writes use `horizon_writer` or `horizon_ci`
+- A knowledge-graph product or a graph database
+- Full GitHub ingestion — the CI command sees only the pull request it runs on
+- The A2UI wire protocol — the catalog JSON in `docs/spec/design.md` is the contract
+- MCP retrieval, eval replay, Jira, Slack, or extra agent runtimes
 
 ## Stack
 
@@ -23,11 +40,11 @@ GitHub App webhooks are delivered to `services/agent`. The service verifies `X-H
 
 ## Authority
 
-An AI result is a proposal. A human organization member approves it. The agent service account must not append `ProposalApproved` or directly change a rule, skill, prompt, or evaluation.
+An AI result is a proposal. `horizon_writer` may append `ProposalCreated`, `ProposalVerified`, and `DecisionProposed`. It must not append `ProposalApproved`, `ProposalRejected`, `DecisionAccepted`, `DecisionSuperseded`, `HarnessCompiled`, or `CheckRecorded`.
 
-A verification verdict comes from a schema check, a lint, a hook, or a test. A model must not judge compliance. `ProposalVerified` records that mechanical result, or `NotConfigured` when no such check exists.
+A human member approves by calling `approve_proposal` or `reject_proposal`. The function appends the approval event and the domain event in one transaction. The browser cannot insert those event types.
 
-Jev is a `ProposalVerifier` port in `services/agent`. The phase-1 implementation returns `NotConfigured`. Do not call the TypeSafe API in this phase.
+A verification verdict comes from a schema check, a lint, a hook, or a test. A model must not judge compliance. `ProposalVerified` records that mechanical result, or `NotConfigured` when no such check exists. While the verdict is `NotConfigured`, a human may still approve — the gap is recorded on the proposal, not hidden.
 
 ## Language
 
@@ -35,4 +52,4 @@ Identifiers, schema names, comments, commits, and rules are English.
 
 ## Tenancy
 
-Every tenant-owned row has `org_id`. RLS checks organization membership. Never authorize from `user_metadata`. Local seed is one organization; the schema stays multi-tenant.
+Every tenant-owned row has `org_id`. RLS checks organization membership and `auth.uid()`. Never authorize from `user_metadata`. Local seed is one organization; the schema stays multi-tenant.
