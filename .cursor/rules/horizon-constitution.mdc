@@ -15,7 +15,7 @@ Horizon is an event-sourced engineering memory. Phase 1 stores decisions (ADRs),
 
 If a task needs one of these, stop and ask. Do not scaffold them.
 
-- A model as judge — a verdict is a schema check, a lint, a hook, or a test
+- A model as judge — a verdict is a schema check, a lint, a hook, a test, or the CI sensor function. That function may call Jev for a noul score on a semgrep match. The score is an input, not the verdict
 - Client `UPDATE` or `DELETE` of events or projection tables
 - Browser insert of `ProposalApproved` or `ProposalRejected` — approval goes through `approve_proposal` / `reject_proposal`
 - The Supabase service role as a runtime writer — runtime event writes use `horizon_writer` or `horizon_ci`
@@ -45,6 +45,8 @@ An AI result is a proposal. `horizon_writer` may append `ProposalCreated`, `Prop
 A human member approves by calling `approve_proposal` or `reject_proposal`. The function appends the approval event and the domain event in one transaction. The browser cannot insert those event types.
 
 A verification verdict comes from a schema check, a lint, a hook, or a test. A model must not judge compliance. `ProposalVerified` records that mechanical result, or `NotConfigured` when no such check exists. While the verdict is `NotConfigured`, a human may still approve — the gap is recorded on the proposal, not hidden.
+
+The CI sensor is that kind of check for a diff. The fixture calls Jev's noul endpoint on each semgrep match and records `violated` only when the score reaches the sensor's threshold. `ProposalVerifier` still must not call a model.
 
 ## Language
 

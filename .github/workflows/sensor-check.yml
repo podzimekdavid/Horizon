@@ -1,0 +1,39 @@
+name: Sensor
+
+on:
+  pull_request:
+
+jobs:
+  sensor:
+    name: ADR-0006 sensor
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+      - uses: gradle/actions/setup-gradle@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install semgrep
+      - name: Scan changed code
+        working-directory: services/agent
+        env:
+          HORIZON_WORKSPACE: ${{ github.workspace }}
+          HORIZON_REPOSITORY: ${{ github.repository }}
+          HORIZON_PULL_REQUEST: ${{ github.event.pull_request.number }}
+          HORIZON_SHA: ${{ github.event.pull_request.head.sha }}
+          HORIZON_PR_BODY: ${{ github.event.pull_request.body }}
+          HORIZON_CHANGED_FILES: ${{ runner.temp }}/changed.txt
+          HORIZON_SUPABASE_URL: ${{ secrets.HORIZON_SUPABASE_URL }}
+          HORIZON_CI_KEY: ${{ secrets.HORIZON_CI_KEY }}
+          HORIZON_ORG_ID: ${{ secrets.HORIZON_ORG_ID }}
+          TYPESAFE_API_KEY: ${{ secrets.TYPESAFE_API_KEY }}
+        run: |
+          git diff --name-only --diff-filter=ACMR "origin/${{ github.base_ref }}"...HEAD \
+            > "$HORIZON_CHANGED_FILES"
+          ./gradlew ciCheck --no-daemon

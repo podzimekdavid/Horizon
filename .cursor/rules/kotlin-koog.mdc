@@ -24,7 +24,9 @@ A command appends events. It does not `UPDATE` projection tables. Use the stream
 
 Call verification through a `ProposalVerifier` port. It checks a proposal.
 
-The phase-1 implementation returns `NotConfigured` and records that outcome on `ProposalVerified`. A human may still approve while the verdict is `NotConfigured`; the gap stays visible on the proposal. Do not add a TypeSafe HTTP client in this phase. The port reports only a mechanical verdict (schema, lint, hook, or test) and must not call a model.
+The phase-1 implementation returns `NotConfigured` and records that outcome on `ProposalVerified`. A human may still approve while the verdict is `NotConfigured`; the gap stays visible on the proposal. Do not add a TypeSafe client to `ProposalVerifier` in this phase. The port reports only a mechanical verdict (schema, lint, hook, or test) and must not call a model.
+
+The CI sensor is not that port. It may call Jev's noul endpoint as an input to the fixture function. The function records `violated`. The score does not.
 
 ```kotlin
 // ❌ Koog memory is not the record

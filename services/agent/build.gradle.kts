@@ -32,6 +32,13 @@ application {
     mainClass.set("horizon.agent.ApplicationKt")
 }
 
+tasks.register<JavaExec>("ciCheck") {
+    group = "application"
+    description = "Run the ADR-0006 sensor for the pull request in the environment."
+    classpath = sourceSets.main.get().runtimeClasspath
+    mainClass.set("horizon.agent.ci.CheckMainKt")
+}
+
 tasks.test {
     useJUnitPlatform()
 }
