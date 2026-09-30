@@ -182,11 +182,11 @@ A team shares one log across repositories. One person can run the same loop in a
 
 A GitHub App on the organization sends HTTPS webhooks to `services/agent` on Render. The service checks `X-Hub-Signature-256`, treats `X-GitHub-Delivery` as idempotent, keeps the subscribed event types, and appends to `events`. Supabase is the log. GitHub does not call Supabase.
 
-A push is one delivery. The body lists at most 20 commits. A larger push is completed with the compare API before the append. A merged pull request delivers `pull_request` with action `closed` and `merged: true`, and a `push` to the base branch. A pull request closed without a merge delivers only `pull_request`.
+Which event types the App subscribes to is still open.
 
 `CheckRecorded` is still appended by the CI command for that pull request, through the same append function. The webhook does not record `applies`, `cited`, or `violated`.
 
-A one-time poll through that function loads history already on GitHub. The live feed is the webhook. Phase 1 appends `CheckRecorded` from CI and does not run the receiver. Phase 3 turns the receiver on.
+A one-time poll through that function loads history already on GitHub. The live feed is the webhook. Phase 1 appends `CheckRecorded` from CI and does not run the receiver. Phase 3 turns the receiver on for the event types chosen by then.
 
 ## Phases
 
@@ -212,7 +212,7 @@ Bootstrap (`AGENTS.md`, `.cursor/rules`, skill), verify (dead references, contra
 
 ### Phase 3 — Wider evidence
 
-The GitHub App webhook on `services/agent` appends the selected events. Review findings and `learned_from`. A human-confirmed "implements" claim, kept separate from `applies` / `cited` / `violated`. Cross-repo etalon rollout. A real Jev adapter for the proposals that need a mechanical check. Jira, Slack, and further agent runtimes are new event types when a team asks.
+The GitHub App webhook on `services/agent` appends the event types chosen by then. Review findings and `learned_from`. A human-confirmed "implements" claim, kept separate from `applies` / `cited` / `violated`. Cross-repo etalon rollout. A real Jev adapter for the proposals that need a mechanical check. Jira, Slack, and further agent runtimes are new event types when a team asks.
 
 ## Out of scope
 
@@ -240,6 +240,7 @@ The GitHub App webhook on `services/agent` appends the selected events. Review f
 - Does the research brief live only on the proposal payload, or is the generated view its own stream?
 - Are comments in the discussion step events, or are they outside the log until someone turns one into a proposal?
 - When Jev gets a real adapter, which proposals must pass that mechanical check before a human can approve: ADR acceptance, harness compile, or both?
+- Which GitHub webhook event types does phase 3 subscribe to?
 
 ## Sources
 

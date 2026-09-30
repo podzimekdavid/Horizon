@@ -13,7 +13,7 @@ Use Supabase for every capability it already provides: Postgres, Auth, RLS, Stor
 
 Custom command logic and every AI workflow live in Kotlin with Koog (`services/agent`). Do not put that logic in Edge Functions or in the web app.
 
-GitHub App webhooks are delivered to `services/agent`. The service verifies `X-Hub-Signature-256`, dedupes `X-GitHub-Delivery`, and appends to `events`. Do not point GitHub at an Edge Function, at `apps/web`, or at Supabase. Phase 1 does not ingest GitHub events. The path is specified in `idea.md`.
+GitHub App webhooks are delivered to `services/agent`. The service verifies `X-Hub-Signature-256`, dedupes `X-GitHub-Delivery`, and appends to `events`. Which event types are subscribed is still open. Do not point GitHub at an Edge Function, at `apps/web`, or at Supabase. Phase 1 does not ingest GitHub events. The path is specified in `idea.md`.
 
 ## Layout
 
