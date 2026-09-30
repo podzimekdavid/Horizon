@@ -26,3 +26,11 @@ services:
     depends_on:
       migrate:
         condition: service_completed_successfully
+
+  # Supavisor's limits.sh runs `ulimit -n 100000` and exits when the container's hard limit is lower
+  # (GitHub runners), which crash-loops the pooler and fails `up --wait`. Grant the limit up front.
+  supavisor:
+    ulimits:
+      nofile:
+        soft: 100000
+        hard: 100000
