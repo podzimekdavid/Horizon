@@ -1,6 +1,28 @@
+<p align="center">
+  <img src="docs/slides/public/ambient.jpg" alt="Horizon" width="520" />
+</p>
+
 # Horizon
 
-Event-sourced engineering memory. Architects research the system, write ADRs, and see them against the pull requests CI has recorded. An accepted decision compiles into a sensor that agents run. **AI proposes, a human approves.**
+**Architecture that keeps up with your agents.**
+
+Horizon researches your system, drafts the decisions (ADRs), checks every pull request against them, and brings you only what needs a human call. **AI proposes, a human approves.**
+
+## The loop
+
+```mermaid
+flowchart LR
+    R["1 · Research<br/><i>what did we decide?</i>"] --> D["2 · Draft<br/><i>AI writes the ADR</i>"]
+    D --> H["3 · Decide<br/><i>a human signs off</i>"]
+    H --> E["4 · Enforce<br/><i>CI checks every PR</i>"]
+    E --> L["5 · Learn<br/><i>drift comes back as a proposal</i>"]
+    L --> R
+
+    classDef step fill:#e4eed6,stroke:#6fa84a,color:#0b120e;
+    classDef human fill:#c6e89a,stroke:#6fa84a,stroke-width:3px,color:#0b120e;
+    class R,D,E,L step;
+    class H human;
+```
 
 ## How it works
 
@@ -13,24 +35,18 @@ flowchart LR
 
     Log -->|Postgres fold| Proj["projections<br/>decisions · checks · harness"]
     Proj --> Web
-
     Web -->|"approve_proposal"| Log
+
+    classDef store fill:#c6e89a,stroke:#6fa84a,color:#0b120e;
+    classDef node fill:#e4eed6,stroke:#6fa84a,color:#0b120e;
+    class Log,Proj store;
+    class Web,GH,Agent,CI node;
 ```
 
 - **Events are the only record.** Projections are rebuilt from them.
 - **The agent only proposes.** It cannot approve, reject, or accept a decision.
 - **Approval is one function.** `approve_proposal` writes the approval and the domain event in one transaction.
 - **Verdicts are mechanical.** Schema, lint, hook, or test. Never a model.
-
-## Lifecycle
-
-```mermaid
-flowchart LR
-    A[ProposalCreated] --> B[ProposalVerified]
-    B --> C{Human}
-    C -->|approve_proposal| D[DecisionAccepted<br/>or HarnessCompiled]
-    C -->|reject_proposal| E[ProposalRejected]
-```
 
 ## Layout
 
@@ -42,6 +58,7 @@ flowchart LR
 | `cli/` | `horizon append` / `horizon list` |
 | `docker/` | Local Supabase stack via compose |
 | `docs/spec/` | Requirements, work packages, design, ADRs |
+| `docs/slides/` | Pitch deck (Slidev) |
 
 ## Run locally
 
