@@ -1,0 +1,36 @@
+---
+description: Supabase schema, RLS, and migration workflow for Horizon
+globs: supabase/**/*
+alwaysApply: false
+---
+
+# Supabase
+
+Supabase hosts the event log. The event table is the system of record. Projection tables are rebuildable read models, not a second record. Confirm current behavior in the Supabase docs or the Supabase MCP `search_docs` tool before using an API, extension, or CLI flag.
+
+## Security
+
+- Enable RLS on every table in an exposed schema, including projections.
+- Policies key off organization membership and `auth.uid()`. Do not read `user_metadata` for authorization.
+- The publishable (anon) key is the only Supabase key allowed in `apps/web`.
+- The service role stays in `services/agent`. Never commit it and never put it in `VITE_` or `NEXT_PUBLIC_` variables.
+- Views in Postgres 15+ use `security_invoker = true`.
+- Do not place `security definer` functions in an exposed schema.
+- Do not create a client `UPDATE` or `DELETE` policy on `events` or on projection tables. Projections are written only by the Postgres function that folds events.
+- If a later table genuinely needs a client `UPDATE`, that policy also needs a `SELECT` policy. Without it, Postgres updates zero rows and returns no error.
+
+## Schema change
+
+Iterate with `supabase db query` or the Supabase MCP `execute_sql` tool. Do not use `apply_migration` to experiment.
+
+When the schema is ready:
+
+1. Run advisors (`supabase db advisors` or MCP `get_advisors`) and fix findings.
+2. Generate the file with `supabase db pull <name> --local --yes`.
+3. Check `supabase migration list --local`.
+
+Create a new empty migration only through `supabase migration new <name>`. Do not invent a migration filename.
+
+## Local
+
+After a migration, prove the claim with a query: an event insert succeeds, a direct update of a projection fails, and a user outside the organization cannot read the row.
