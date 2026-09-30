@@ -1,0 +1,8 @@
+rules:
+  - id: horizon.web-llm-sdk
+    languages: [generic]
+    severity: ERROR
+    message: The web app references an LLM SDK.
+    metadata:
+      decision_id: ADR-0006
+    pattern-regex: '@anthropic-ai/sdk'
