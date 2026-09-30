@@ -1,0 +1,30 @@
+---
+description: Vite React client boundaries for the Horizon web app
+globs: apps/web/**/*
+alwaysApply: false
+---
+
+# Web app
+
+`apps/web` is a Vite + React + TypeScript SPA. It renders projections and sends user-authorized commands. It is not a second backend.
+
+## Data access
+
+- Use `supabase-js` with the publishable key and the user session.
+- Read projections. Do not treat the browser as the place that maintains read models.
+- Append an event from the client only when RLS can authorize that insert alone.
+- If a command needs branching, a model, or more than one stream, call `services/agent`. Do not reimplement that command in the client.
+
+## UI
+
+- Functional components. Shared data access goes in hooks next to the feature.
+- A proposal is shown as proposed, verified, approved, or rejected. The UI never marks a proposal approved without the human action that appends the approval event.
+- Do not import an LLM SDK, Koog, or a service-role client.
+
+```tsx
+// ❌ client writes the read model
+await supabase.from("rules").update({ body }).eq("id", id);
+
+// ✅ client appends a fact the member is allowed to record
+await supabase.from("events").insert({ org_id, stream_id, stream_type: "rule", version, event_type: "RuleUpdated", schema_version: 1, payload, actor_id });
+```

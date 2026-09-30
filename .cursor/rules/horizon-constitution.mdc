@@ -1,0 +1,36 @@
+---
+description: Horizon product boundary, stack split, and human approval of AI proposals
+alwaysApply: true
+---
+
+# Horizon
+
+Horizon is an event-sourced engineering memory. Phase 1 stores harness knowledge only: rules, skills, prompts, and evaluations. Decisions, pull requests, review findings, incidents, and a knowledge-graph product are out of scope. If a task needs one of them, stop and ask. Do not scaffold them.
+
+## Stack
+
+Use Supabase for every capability it already provides: Postgres, Auth, RLS, Storage, Realtime, and queues, cron, or pgvector only when a feature needs them.
+
+Custom command logic and every AI workflow live in Kotlin with Koog (`services/agent`). Do not put that logic in Edge Functions or in the web app.
+
+## Layout
+
+- `supabase/` — config, migrations, seed
+- `services/agent/` — Kotlin, Ktor, Koog
+- `apps/web/` — Vite, React, TypeScript
+
+## Authority
+
+An AI result is a proposal. A human organization member approves it. The agent service account must not append `ProposalApproved` or directly change a rule, skill, prompt, or evaluation.
+
+A verification verdict comes from a schema check, a lint, a hook, or a test. A model must not judge compliance. `ProposalVerified` records that mechanical result, or `NotConfigured` when no such check exists.
+
+Jev is a `ProposalVerifier` port in `services/agent`. The phase-1 implementation returns `NotConfigured`. Do not call the TypeSafe API in this phase.
+
+## Language
+
+Identifiers, schema names, comments, commits, and rules are English.
+
+## Tenancy
+
+Every tenant-owned row has `org_id`. RLS checks organization membership. Never authorize from `user_metadata`. Local seed is one organization; the schema stays multi-tenant.
