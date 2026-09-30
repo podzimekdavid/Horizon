@@ -9,7 +9,7 @@ Horizon is an event-sourced engineering memory. Phase 1 stores decisions (ADRs),
 
 ## Phase 1 streams
 
-`organization`, `membership`, `proposal`, `decision`, `check`, `research_session`, `harness`
+`organization`, `membership`, `proposal`, `decision`, `check`, `research_session`, `harness`, `pull_request`
 
 ## Forbidden in phase 1
 
@@ -40,7 +40,7 @@ GitHub App webhooks are delivered to `services/agent`. The service verifies `X-H
 
 ## Authority
 
-An AI result is a proposal. `horizon_writer` may append `ProposalCreated`, `ProposalVerified`, and `DecisionProposed`. It must not append `ProposalApproved`, `ProposalRejected`, `DecisionAccepted`, `DecisionSuperseded`, `HarnessCompiled`, or `CheckRecorded`.
+An AI result is a proposal. `horizon_writer` may append `ProposalCreated`, `ProposalVerified`, `DecisionProposed`, and `PullRequestReceived` (the GitHub webhook receiver, through `append_pull_request_received`). It must not append `ProposalApproved`, `ProposalRejected`, `DecisionAccepted`, `DecisionSuperseded`, `HarnessCompiled`, or `CheckRecorded`.
 
 A human member approves by calling `approve_proposal` or `reject_proposal`. The function appends the approval event and the domain event in one transaction. The browser cannot insert those event types.
 

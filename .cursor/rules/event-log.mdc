@@ -26,7 +26,7 @@ The service role has no grant rows, so the trigger rejects its runtime inserts. 
 
 ## Streams (phase 1)
 
-`organization`, `membership`, `proposal`, `decision`, `check`, `research_session`, `harness`
+`organization`, `membership`, `proposal`, `decision`, `check`, `research_session`, `harness`, `pull_request`
 
 Name events in past-tense PascalCase (`DecisionProposed`) and set `schema_version`.
 
@@ -35,7 +35,7 @@ Name events in past-tense PascalCase (`DecisionProposed`) and set `schema_versio
 | Role | Event types |
 |---|---|
 | member (`authenticated`) | `ResearchSessionOpened`, `DiscussionNoted` |
-| `horizon_writer` | `ProposalCreated`, `ProposalVerified`, `DecisionProposed` |
+| `horizon_writer` | `ProposalCreated`, `ProposalVerified`, `DecisionProposed`, `PullRequestReceived` |
 | `horizon_ci` | `CheckRecorded`, `ProposalCreated` of kind `review_violations` only |
 | `approve_proposal` / `reject_proposal` | `ProposalApproved` or `ProposalRejected`, plus the one domain event the kind names |
 

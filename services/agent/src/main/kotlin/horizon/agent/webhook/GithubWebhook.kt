@@ -36,7 +36,6 @@ const val GITHUB_PULL_REQUEST = "pull_request"
 data class WebhookConfig(
     val secret: String,
     val orgId: UUID,
-    val actorId: UUID,
     val port: Int = 8080,
     val supabaseUrl: String? = null,
     val supabaseWriterKey: String? = null,
@@ -55,7 +54,6 @@ data class WebhookConfig(
             return WebhookConfig(
                 secret = env["GITHUB_WEBHOOK_SECRET"].orEmpty(),
                 orgId = UUID.fromString(env.required("HORIZON_ORG_ID")),
-                actorId = UUID.fromString(env.required("HORIZON_GITHUB_ACTOR_ID")),
                 port = env["PORT"]?.toIntOrNull() ?: 8080,
                 supabaseUrl = url,
                 supabaseWriterKey = key,
@@ -67,16 +65,22 @@ data class WebhookConfig(
     }
 }
 
+/**
+ * One delivery to append. It carries no version and no actor: the database picks
+ * the next version under a stream lock, and the trigger resolves the actor from
+ * the writer session.
+ */
 data class GithubDelivery(
     val orgId: UUID,
     val streamId: UUID,
-    val version: Int,
     val eventType: String,
     val schemaVersion: Int,
     val payload: JsonElement,
-    val actorId: UUID,
     val deliveryId: String,
 )
+
+/** A stored event, as the in-memory appender keeps it. */
+data class StoredEvent(val version: Int, val delivery: GithubDelivery)
 
 fun interface EventAppender {
     suspend fun append(delivery: GithubDelivery): AppendResult
@@ -88,15 +92,15 @@ sealed interface AppendResult {
 }
 
 class InMemoryEventAppender : EventAppender {
-    val events = mutableListOf<GithubDelivery>()
+    val events = mutableListOf<StoredEvent>()
 
     override suspend fun append(delivery: GithubDelivery): AppendResult {
         check(delivery.eventType == PULL_REQUEST_EVENT) {
             "GitHub webhook appends $PULL_REQUEST_EVENT"
         }
-        if (events.any { it.deliveryId == delivery.deliveryId }) return AppendResult.Duplicate
-        val version = events.count { it.streamId == delivery.streamId } + 1
-        events += delivery.copy(version = version)
+        if (events.any { it.delivery.deliveryId == delivery.deliveryId }) return AppendResult.Duplicate
+        val version = events.count { it.delivery.streamId == delivery.streamId } + 1
+        events += StoredEvent(version, delivery)
         return AppendResult.Appended
     }
 }
@@ -105,6 +109,8 @@ class DeliveryLog(
     private val config: WebhookConfig,
     private val appender: EventAppender,
 ) {
+    // Only a shortcut for deliveries that need no append. The appender owns dedupe
+    // of stored events: after a restart this set is empty and the log still decides.
     private val seen = mutableSetOf<String>()
     private val mutex = Mutex()
 
@@ -122,11 +128,9 @@ class DeliveryLog(
         val delivery = GithubDelivery(
             orgId = config.orgId,
             streamId = streamIdFor(config.orgId, parsed.repository, parsed.number),
-            version = 0,
             eventType = PULL_REQUEST_EVENT,
             schemaVersion = 1,
             payload = parsed.toPayload(deliveryId),
-            actorId = config.actorId,
             deliveryId = deliveryId,
         )
         return when (appender.append(delivery)) {
@@ -207,10 +211,17 @@ fun hmacSha256Hex(secret: String, body: ByteArray): String {
     return mac.doFinal(body).joinToString("") { "%02x".format(it) }
 }
 
-/** One stream per (org_id, repository full_name, pull request number). */
+/**
+ * One stream per (org_id, repository full_name, pull request number).
+ *
+ * The name carries the stream type. The check stream is a UUIDv5 of the same three
+ * fields; this one is a UUIDv3 of a different name, so the two never share a
+ * `(stream_id, version)`. `append_pull_request_received` also refuses a stream id
+ * that already belongs to another stream type.
+ */
 fun streamIdFor(orgId: UUID, repository: String, pullRequestNumber: Int): UUID =
     UUID.nameUUIDFromBytes(
-        "$orgId:$repository:$pullRequestNumber".toByteArray(Charsets.UTF_8),
+        "$PULL_REQUEST_STREAM:$orgId:$repository:$pullRequestNumber".toByteArray(Charsets.UTF_8),
     )
 
 fun parsePullRequest(body: ByteArray): PullRequestFields? {

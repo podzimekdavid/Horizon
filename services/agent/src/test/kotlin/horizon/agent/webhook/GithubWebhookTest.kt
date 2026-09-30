@@ -6,6 +6,7 @@ import io.ktor.client.request.post
 import io.ktor.client.request.setBody
 import io.ktor.http.HttpStatusCode
 import io.ktor.server.testing.testApplication
+import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.boolean
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
@@ -19,7 +20,6 @@ import kotlin.test.assertTrue
 class GithubWebhookTest {
     private val secret = "secret"
     private val orgId = UUID.fromString("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
-    private val actorId = UUID.fromString("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb")
 
     @Test
     fun hmacMatchesAnIndependentVector() {
@@ -63,12 +63,11 @@ class GithubWebhookTest {
         assertEquals(HttpStatusCode.Accepted, first.status)
         assertEquals(HttpStatusCode.NoContent, second.status)
         assertEquals(1, appender.events.size)
-        val event = appender.events.single()
+        val stored = appender.events.single()
+        val event = stored.delivery
         assertEquals(PULL_REQUEST_EVENT, event.eventType)
-        assertEquals(PULL_REQUEST_STREAM, "pull_request")
-        assertEquals(1, event.version)
+        assertEquals(1, stored.version)
         assertEquals(orgId, event.orgId)
-        assertEquals(actorId, event.actorId)
         assertEquals(streamIdFor(orgId, "acme/horizon", 42), event.streamId)
         val payload = event.payload.jsonObject
         assertEquals("delivery-1", payload.getValue("delivery_id").jsonPrimitive.content)
@@ -103,8 +102,8 @@ class GithubWebhookTest {
         assertEquals(2, appender.events.size)
         val stream = streamIdFor(orgId, "acme/horizon", 7)
         assertEquals(listOf(1, 2), appender.events.map { it.version })
-        assertTrue(appender.events.all { it.streamId == stream })
-        assertEquals("synchronize", appender.events[1].payload.jsonObject.getValue("action").jsonPrimitive.content)
+        assertTrue(appender.events.all { it.delivery.streamId == stream })
+        assertEquals("synchronize", appender.events[1].delivery.payload.jsonObject.getValue("action").jsonPrimitive.content)
     }
 
     @Test
@@ -146,6 +145,26 @@ class GithubWebhookTest {
     }
 
     @Test
+    fun aStoredDeliveryIsNotAppendedAgainAfterARestart() = runBlocking {
+        // A second DeliveryLog has an empty in-memory set, as after a restart.
+        // The appender owns dedupe of stored events, so nothing is appended twice.
+        val appender = InMemoryEventAppender()
+        val config = WebhookConfig(secret = secret, orgId = orgId)
+        val body = prBody(action = "opened", number = 5).toByteArray()
+        val before = DeliveryLog(config, appender).accept("delivery-5", "pull_request", body)
+        val after = DeliveryLog(config, appender).accept("delivery-5", "pull_request", body)
+        assertEquals(AcceptResult.Appended, before)
+        assertEquals(AcceptResult.Duplicate, after)
+        assertEquals(1, appender.events.size)
+    }
+
+    @Test
+    fun theStreamIdDiffersFromAnUntypedHashOfTheSameFields() {
+        val untyped = UUID.nameUUIDFromBytes("$orgId:acme/horizon:42".toByteArray(Charsets.UTF_8))
+        assertNotEquals(untyped, streamIdFor(orgId, "acme/horizon", 42))
+    }
+
+    @Test
     fun healthDoesNotRequireASignature() = testApplication {
         install(InMemoryEventAppender())
         assertEquals(HttpStatusCode.OK, client.get("/health").status)
@@ -157,7 +176,6 @@ class GithubWebhookTest {
             WebhookConfig(
                 secret = "secret",
                 orgId = orgId,
-                actorId = actorId,
                 supabaseUrl = "http://localhost:54321",
                 supabaseWriterKey = null,
             )
@@ -169,7 +187,6 @@ class GithubWebhookTest {
             val config = WebhookConfig(
                 secret = secret,
                 orgId = orgId,
-                actorId = actorId,
             )
             githubWebhooks(config, DeliveryLog(config, appender))
         }
