@@ -10,15 +10,17 @@ Architects need to know which ADRs were in force on a pull request, which were c
 
 The CI command, running inside the pull request job, selects accepted decisions whose globs match the changed paths, runs the mechanical sensor, and fails the job on a violation.
 
-It appends `CheckRecorded` with the pull request, the SHA, the ADR ids, and one relation:
+It appends `CheckRecorded` on the one stream for `(org_id, repository, pull_request)`. The payload has `repository`, the pull request, the SHA, one `adr_id`, and one relation:
 
 - `applies` — the scope covers files in the pull request
-- `cited` — the pull request body or the agent output names the ADR id
+- `cited` — the pull request body or the agent output matches the ADR id on a token boundary
 - `violated` — the sensor failed
 
-These are three facts. `touches` is only the path test inside `applies`. It is not stored as its own relation.
+These are three facts. `touches` is only the path test inside `applies`. It is not stored as its own relation. `ADR-012` does not match `ADR-0120`.
 
-Repeated violations may open `ProposalCreated`. They must not change the decision.
+A missing sensor records `applies` with `sensor: "missing"`, does not record `violated`, and does not fail the job.
+
+The first repeated violation may open one `ProposalCreated` of kind `review_violations` for that repository and ADR. Later red SHAs append `CheckRecorded` only. They must not change the decision.
 
 The command knows only the pull request it is running on. Full GitHub ingestion is a later package.
 

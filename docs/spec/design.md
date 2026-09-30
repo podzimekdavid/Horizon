@@ -5,14 +5,16 @@ Binding for phase 1. Phase 2 and 3 packages extend it. They do not replace the e
 ## Topology
 
 ```
-apps/web  --user JWT-->  supabase.events (insert) and projections (select)
-apps/web  --user JWT-->  services/agent  --service role-->  supabase.events
-GitHub Action --------->  CI command in services/agent  --append CheckRecorded-->
+apps/web  --user JWT-->  supabase projections (select)
+apps/web  --user JWT-->  approve_proposal / reject_proposal / DiscussionNoted
+apps/web  --user JWT-->  services/agent
+services/agent  --horizon_writer-->  supabase.events
+GitHub Action --> CI command --horizon_ci-->  CheckRecorded
 ```
 
-`apps/web` is a Vite + React + TypeScript SPA. It reads projections and appends an event only when RLS can authorize that insert alone. Research rendering, ADR drafts, and any multi-stream command go to `services/agent`.
+`apps/web` is a Vite + React + TypeScript SPA. It reads projections with the user JWT. It inserts only the event types granted to a member (`ResearchSessionOpened`, `DiscussionNoted`). Approval goes through `approve_proposal` or `reject_proposal`. Research rendering, ADR drafts, and any multi-stream command go to `services/agent`.
 
-`services/agent` is Kotlin, JDK 17+, Ktor, Koog 1.0.x stable. Koog stores checkpoints only.
+`services/agent` is Kotlin, JDK 17+, Ktor, Koog 1.0.x stable. Koog stores checkpoints only. Runtime writes use `horizon_writer` or `horizon_ci`. The service role is not a runtime writer. The research read forwards the user JWT and uses `security invoker`, so RLS cuts the tenant. `org_id` is not a client-chosen filter that can see another organization.
 
 `supabase/` is Postgres, Auth, RLS. The event table is the record.
 
@@ -32,11 +34,37 @@ create table public.events (
   occurred_at timestamptz not null default now(),
   unique (stream_id, version)
 );
+
+create table public.event_type_grants (
+  role_name text not null,
+  event_type text not null,
+  primary key (role_name, event_type)
+);
 ```
 
-Insert-only for clients. No `UPDATE` or `DELETE` policy on `events` or on projection tables. A security-definer function owned outside the exposed API schema folds projections. Application code does not update them.
+Insert-only for clients. No `UPDATE` or `DELETE` policy on `events` or on projection tables. A `BEFORE INSERT` trigger on `events`:
+
+- sets `actor_id` from `auth.uid()` for a user JWT
+- sets `actor_id` from the role session setting for `horizon_writer` and `horizon_ci`
+- ignores any `actor_id` in the payload
+- rejects an `event_type` that `event_type_grants` does not grant to the current role
+
+The service role is not granted runtime inserts. A security-definer fold, owned outside the exposed API schema, rebuilds projections. Application code does not update them.
+
+WP-01 creates the trigger and the grants table. Later packages insert rows into `event_type_grants`. They do not edit the trigger.
 
 Event names are past-tense PascalCase. `schema_version` starts at 1.
+
+### Grants
+
+| Role | Event types |
+|---|---|
+| member (`authenticated`) | `ResearchSessionOpened`, `DiscussionNoted` |
+| `horizon_writer` | `ProposalCreated`, `ProposalVerified`, `DecisionProposed` |
+| `horizon_ci` | `CheckRecorded`, `ProposalCreated` of kind `review_violations` only |
+| `approve_proposal` / `reject_proposal` | `ProposalApproved` or `ProposalRejected`, plus the one domain event the kind names |
+
+`OrganizationCreated` and `MemberAdded` are seed and admin writes, not member inserts.
 
 ## Streams
 
@@ -50,20 +78,34 @@ Event names are past-tense PascalCase. `schema_version` starts at 1.
 | `research_session` | `ResearchSessionOpened`, `DiscussionNoted` |
 | `harness` | `HarnessCompiled` |
 
-`ProposalCreated` payload names the target stream and carries the draft. `ProposalApproved` does not copy the draft into a projection by itself. The command that observes approval appends the domain event (`DecisionAccepted`, `HarnessCompiled`).
+A proposal payload has a `kind`: `accept_decision`, `reject_decision`, `supersede`, `compile_harness`, or `review_violations`.
 
-`CheckRecorded` payload:
+`approve_proposal(proposal_id)` runs as the calling member, in one transaction:
+
+- kind `accept_decision` appends `ProposalApproved` and `DecisionAccepted`
+- kind `reject_decision` is not approved; `reject_proposal` appends `ProposalRejected` and `DecisionRejected`
+- kind `supersede` appends `ProposalApproved`, `DecisionSuperseded` on the old stream, and `DecisionAccepted` on the new stream
+- kind `compile_harness` appends `ProposalApproved` and `HarnessCompiled` copied from the candidate already stored on the proposal. The function does not run a model or a compiler
+
+`reject_proposal` appends `ProposalRejected` and, for a decision draft, `DecisionRejected`.
+
+A direct insert of `ProposalApproved`, `DecisionAccepted`, `DecisionRejected`, `DecisionSuperseded`, or `HarnessCompiled` from the browser fails the trigger.
+
+## Check identity
+
+One check stream per `(org_id, repository, pull_request)`. `stream_id` is the UUIDv5 of those three fields. Callers do not invent it.
 
 ```json
 {
+  "repository": "podzimekdavid/horizon",
   "pull_request": 481,
   "sha": "abc",
-  "adr_ids": ["ADR-012"],
+  "adr_id": "ADR-012",
   "relation": "violated"
 }
 ```
 
-`relation` is exactly one of `applies`, `cited`, `violated`. One event per relation. A single CI run may append three events on the same check stream, versions in order.
+`adr_id` is one id. One event per decision per relation. A run that applies, cites, and violates one ADR appends three events on that stream, versions in order. `sensor` is present on `applies` when the value is `"missing"`.
 
 ## Projections
 
@@ -72,43 +114,44 @@ Rebuilt only by the fold.
 | Projection | Key | Source |
 |---|---|---|
 | `decisions` | decision stream id | decision events. Governing globs exist only after `DecisionAccepted`. |
-| `proposals` | proposal stream id | proposal events. Status `proposed`, `verified`, `approved`, `rejected`. |
-| `checks` | check event id | `CheckRecorded`. Never collapsed into a single "used" flag. |
+| `proposals` | proposal stream id | proposal events. Status `proposed`, `verified`, `approved`, `rejected`. Kind is kept. |
+| `checks` | check event id | `CheckRecorded`. Never collapsed into a single "used" flag. Keyed with `repository`. |
 | `harness_artifacts` | harness stream id | `HarnessCompiled`, with `decision_id`. |
 | `discussions` | research session id + version | `DiscussionNoted`. |
 
-Gaps are queries, not stored truth: an accepted decision with an empty glob list; a `violated` check whose decision is not accepted.
+Gaps are queries, not stored truth: an accepted decision with an empty glob list; a `violated` check whose decision is not accepted; two accepted decisions whose globs overlap. Overlap is not a `conflict` relation.
 
 ## Commands
 
 | Command | Who may call | Appends | Must refuse |
 |---|---|---|---|
-| Ingest ADR | human via agent service | `ProposalCreated`, `DecisionProposed` | `DecisionAccepted` |
-| Accept proposal | human member, RLS | `ProposalApproved`, then the domain event | service account |
-| Verify proposal | agent service | `ProposalVerified` | a model call |
-| Record check | CI command, service account | `CheckRecorded`, maybe `ProposalCreated` | `DecisionSuperseded` |
+| Ingest ADR | human via agent service, `horizon_writer` | `ProposalCreated`, `DecisionProposed` | `DecisionAccepted` |
+| `approve_proposal` | human member | `ProposalApproved` and the domain event for the kind | writer role, browser insert, service role |
+| `reject_proposal` | human member | `ProposalRejected` and `DecisionRejected` when the target is a decision | writer role |
+| Verify proposal | `horizon_writer` | `ProposalVerified` | a model call |
+| Record check | `horizon_ci` | `CheckRecorded`, and at most one open `review_violations` proposal | `DecisionSuperseded`, a second open proposal for the same repository and ADR |
 | Open research | human via web | `ResearchSessionOpened` | the agent opening one unprompted |
 | Note discussion | human member | `DiscussionNoted` | treating it as approval |
-| Fill view | agent service | catalog JSON in the HTTP response; `ProposalCreated` only when the user asks to draft | `ProposalApproved` |
-| Compile harness | agent service after acceptance | `HarnessCompiled` | an artifact with no decision id |
+| Fill view | `horizon_writer` | catalog JSON in the HTTP response; `ProposalCreated` only when the user asks to draft | `ProposalApproved` |
+| Compile harness | `horizon_writer`, onto a proposal | candidate sensor on the proposal payload | `HarnessCompiled` before approval; an artifact with no decision id |
 
 Optimistic concurrency uses `version`. On unique conflict, reread and retry the command. Do not update the row.
 
 ## CI command
 
-Input is the pull request the job is running for: number, SHA, changed paths, and the pull request body plus any agent-output text the workflow passes in. The command does not list the repository's other pull requests.
+Input is the pull request the job is running for: repository, number, SHA, changed paths, and the pull request body plus any agent-output text the workflow passes in. The command does not list the repository's other pull requests.
 
 1. Load accepted decisions whose globs match a changed path.
-2. For each match, append `CheckRecorded` with `applies`.
-3. If the body or the agent text contains that ADR id, append `cited`.
-4. Run the mechanical sensor for that decision against the diff. On failure, append `violated` and set the process exit code to non-zero.
-5. If this decision already has a `violated` check on an older SHA, append `ProposalCreated` asking a human to look. Do not append a decision event.
+2. For each match, append `CheckRecorded` with `applies` and that one `adr_id` on the check stream for `(org, repository, pull_request)`.
+3. If the body or the agent text matches that ADR id on a token boundary, append `cited`. `ADR-012` does not match `ADR-0120`.
+4. If `HarnessCompiled` exists, run that mechanical sensor against the diff. On failure, append `violated` and set the process exit code to non-zero. If no sensor exists, set `sensor: "missing"` on the `applies` event, do not append `violated`, and leave the exit code 0.
+5. If a `violated` row already exists for this repository and ADR and no open `review_violations` proposal exists, append one `ProposalCreated`. Further red SHAs append `CheckRecorded` only. Do not append a decision event.
 
-No sensor compiled yet: WP-04 ships a fixture sensor for one decision id. WP-08's output replaces it. Absence of a sensor for a matched decision records `ProposalVerified`-style honesty as a check payload field `sensor: "missing"` and does not pretend the decision was enforced. It still records `applies`. It does not record `violated`.
+WP-04 ships a fixture `Sensor` for one decision id. WP-08 adds the implementation behind the same interface. WP-04 does not edit the harness package.
 
 ## Research read
 
-`GET` on the agent service, user JWT forwarded, org taken from membership.
+`GET` on the agent service. The user JWT is forwarded. The query runs as `security invoker`. The organization is the caller's membership, not a service-role filter in Kotlin.
 
 Response:
 
@@ -117,21 +160,21 @@ Response:
   "area": "payments",
   "decisions": [{ "id": "ADR-012", "status": "accepted", "event_id": "…", "globs": ["src/payments/**"] }],
   "lineage": [{ "from": "ADR-004", "to": "ADR-012", "event_id": "…" }],
-  "checks": [{ "pull_request": 481, "relation": "violated", "adr_ids": ["ADR-012"], "event_id": "…" }],
+  "checks": [{ "repository": "podzimekdavid/horizon", "pull_request": 481, "relation": "violated", "adr_id": "ADR-012", "event_id": "…" }],
   "gaps": [{ "kind": "decision_without_glob", "adr_id": "ADR-004", "event_id": "…" }],
-  "proposals": [{ "id": "…", "status": "proposed", "event_id": "…" }]
+  "proposals": [{ "id": "…", "status": "proposed", "kind": "accept_decision", "event_id": "…" }]
 }
 ```
 
-This payload is what panels cite. The model is not on this path.
+Panels cite those `event_id` values only. The model is not on this path.
 
 ## Catalog
 
-The agent service returns this. The web app renders it. Unknown component names are dropped.
+The agent service returns this. The web app renders it. Unknown component names are dropped. A panel whose `citations` are not event ids from this response is dropped.
 
 ```json
 {
-  "question": "Does PR 481 contradict ADR-012?",
+  "question": "What has CI recorded for payments?",
   "panels": [
     {
       "component": "DecisionMap",
@@ -144,27 +187,41 @@ The agent service returns this. The web app renders it. Unknown component names 
 
 Components: `DecisionMap`, `ImplementationList`, `PullRequestLibrary`, `GapList`, `ProposalCard`.
 
-`ProposalCard` data includes the proposal id. Approve and reject call the accept command. No other component appends `ProposalApproved`.
+`ProposalCard` data includes the proposal id. Approve calls `approve_proposal`. Reject calls `reject_proposal`. No component inserts `ProposalApproved`.
 
 ## Authority
 
 | Actor | ProposalCreated | ProposalVerified | ProposalApproved | CheckRecorded | DecisionAccepted |
 |---|---|---|---|---|---|
-| Human member | yes | no | yes | no | via the accept command |
-| Agent service | yes | yes | no | yes, from CI | no |
-| Browser, direct | only if RLS allows a single insert | no | yes, if member | no | no |
+| Human member, direct insert | no | no | no | no | no |
+| `approve_proposal` as that member | no | no | yes, with the domain event | no | yes, when the kind says so |
+| `horizon_writer` | yes | yes | no | no | no |
+| `horizon_ci` | only `review_violations`, once per open slot | no | no | yes | no |
+| Service role at runtime | no | no | no | no | no |
 
 ## Layout
 
 ```
-supabase/          WP-01, plus projection SQL the later packages add
-services/agent/    WP-02, WP-03, WP-04, WP-05, WP-07, WP-08
-apps/web/          WP-06
-.github/workflows/ WP-04
-.cursor/rules/     WP-00
-docs/spec/         this assignment, read-only during implementation
+supabase/                         WP-01: envelope, trigger, grants table, fold
+supabase/migrations/*proposal*    WP-02: grant rows and proposal fold only
+supabase/migrations/*decision*    WP-03
+supabase/migrations/*check*       WP-04
+supabase/migrations/*harness*     WP-08
+services/agent/.../proposal/      WP-02
+services/agent/.../decision/      WP-03
+services/agent/.../sensor/        WP-03: the Sensor interface
+services/agent/.../ci/            WP-04
+services/agent/.../harness/       WP-08
+services/agent/.../research/      WP-05
+services/agent/.../view/          WP-07
+apps/web/                         WP-06
+.github/workflows/                WP-04
+.cursor/rules/                    WP-00
+docs/spec/                        this assignment, read-only during implementation
 ```
+
+A package edits only its directories. It inserts grant rows. It does not edit the trigger or another package's directory.
 
 ## Not in phase 1
 
-Full GitHub ingestion, A2UI on the wire, MCP retrieval, eval replay, Jira, Slack, a graph database, a model as judge, client `UPDATE` of any projection.
+Full GitHub ingestion, A2UI on the wire, MCP retrieval, eval replay, Jira, Slack, a graph database, a model as judge, client `UPDATE` of any projection, runtime use of the service role.

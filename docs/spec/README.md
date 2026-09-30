@@ -18,7 +18,7 @@ Give one agent one work package. Pass that package, the ADRs it lists, and the d
 | [requirements.md](requirements.md) | Functional requirements, ids `FR-*` and `NFR-*` |
 | [work-packages.md](work-packages.md) | The units of work. One package per agent. |
 | [design.md](design.md) | Event envelope, projections, commands, CI, catalog JSON |
-| [adr/](adr/) | Draft decisions. Treat them as proposed and binding until a human supersedes them. |
+| [adr/](adr/) | Draft decisions for this product. Implementation follows them until a human supersedes them. That is not the decision status `proposed`, which means CI ignores the decision. |
 
 ## Order
 
@@ -29,7 +29,8 @@ Phase 2: WP-09, WP-10. Phase 3: WP-11. Do not start those inside a phase-1 packa
 ## Rules that every package inherits
 
 - The event table is the only record. Projections are rebuilt from events.
-- A model may draft. A human organization member approves. The agent service account must not append `ProposalApproved` or `ProposalRejected`.
+- A model may draft. A human member approves by calling `approve_proposal` or `reject_proposal`. Those functions write the approval and the domain event in one transaction. The browser cannot insert `ProposalApproved`.
+- Runtime event writes use `horizon_writer` or `horizon_ci`. The service role is not a runtime writer. `actor_id` comes from the session, not the payload.
 - A compliance verdict is a schema check, a lint, a hook, or a test. A model must not judge compliance.
 - `applies`, `cited`, and `violated` are three relations. A path intersection is not a citation. A violation does not change the decision.
 - The user leads a research session. The agent renders a view. An uncited panel is invalid.

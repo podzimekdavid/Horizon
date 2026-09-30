@@ -1,14 +1,14 @@
 # Horizon
 
-Horizon is the workspace where an architect researches the system, writes and evolves ADRs, and sees those decisions against the code and the pull requests that implement them. An accepted decision is compiled into the harness coding agents run. When the code, a review, or an eval shows drift, Horizon proposes the next change. A human approves it.
+Horizon is the workspace where an architect researches the system, writes and evolves ADRs, and sees those decisions against the code and the pull requests CI has recorded. An accepted decision is compiled into the harness coding agents run. When the code, a review, or an eval shows drift, Horizon proposes the next change. A human approves it.
 
 Pitch:
 
-> The architect asks what the system decided, sees where that decision lives in the code and in open pull requests, and accepts or supersedes the ADR in the same view. Agents then run the harness compiled from that decision, and the next pull request shows up on it.
+> The architect asks what the system decided, sees the pull requests CI has recorded against that decision, and accepts or supersedes the ADR in the same view. Agents then run the harness compiled from that decision, and the next pull request check shows up on it.
 
 This file is the product narrative. The assignment for implementation is [docs/spec/README.md](docs/spec/README.md): requirements, work packages, the technical design, and the first ADR drafts. When they disagree, `docs/spec/` wins.
 
-The Cursor rules on `cursor/horizon-agent-rules` still fence phase 1 to harness streams only. WP-00 in the spec is the package that opens those rules to the decision stream and the CI library.
+The Cursor rules in `.cursor/rules/` still fence phase 1 to harness streams only. WP-00 in the spec is the package that opens those rules to the decision stream and the CI library.
 
 ## Problem
 
@@ -218,7 +218,7 @@ Review findings and `learned_from`. Full GitHub ingestion beyond the pull reques
 
 ## Risks
 
-- **Cold start.** The first screen ingests ADRs and open pull requests that already exist. An empty log is not the demo.
+- **Cold start.** The first screen ingests ADRs that already exist and the checks CI writes for the pull request under test. An empty log is not the demo.
 - **A stale overview.** `applies`, `cited`, and `violated` stay labeled as those three relations. A path intersection is not shown as a citation, and a violation is not shown as a changed decision.
 - **False ADR merges.** Two decisions that sound alike and constrain different things. The proposal shows both constraints side by side.
 - **Overview scope.** The catalog renders the research view. A panel without a citation is invalid. The agent does not invent a page, and it does not lead the investigation.

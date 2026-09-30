@@ -14,7 +14,7 @@ One package per agent. Dependencies are blocking. **Owns** is the only tree the 
 
 **Requirements:** FR-AUTH-1, FR-AUTH-2, FR-AUTH-5, FR-LOG-1, NFR-1
 
-The rules on `cursor/horizon-agent-rules` still forbid a decision stream and pull-request checks. This package opens phase 1 to `decision`, `check`, and `research_session`, and keeps the bans: no model judge, no client writes to projections, no agent approval, no knowledge-graph product, no full GitHub ingestion, no A2UI wire protocol.
+The rules in `.cursor/rules/` still forbid a decision stream and pull-request checks. This package opens phase 1 to `decision`, `check`, and `research_session`, and keeps the bans: no model judge, no client writes to projections, no direct browser approval, no runtime service role, no knowledge-graph product, no full GitHub ingestion, no A2UI wire protocol.
 
 **Done when:**
 
@@ -26,17 +26,20 @@ The rules on `cursor/horizon-agent-rules` still forbid a decision stream and pul
 
 **Depends on:** WP-00.
 
-**Owns:** `supabase/`
+**Owns:** `supabase/` envelope, trigger, `event_type_grants`, and the fold. Later packages insert grant rows and their own projection migrations. They do not edit this trigger.
 
-**Read:** [design.md](design.md) sections Event envelope, Streams, Projections. [adr/0001](adr/0001-event-log-is-the-record.md), [adr/0006](adr/0006-stack-split.md)
+**Read:** [design.md](design.md) sections Event envelope, Grants, Streams. [adr/0001](adr/0001-event-log-is-the-record.md), [adr/0006](adr/0006-stack-split.md)
 
-**Requirements:** FR-LOG-1 through FR-LOG-5, FR-TEN-1 through FR-TEN-3, NFR-2, NFR-4
+**Requirements:** FR-LOG-1 through FR-LOG-6, FR-TEN-1 through FR-TEN-3, NFR-2, NFR-4
 
 **Done when:**
 
-- A member can insert an event for their organization.
+- A member can insert `DiscussionNoted` for their organization.
+- A member insert of `DecisionAccepted`, `CheckRecorded`, `HarnessCompiled`, or `ProposalVerified` fails.
+- The stored `actor_id` is `auth.uid()` when the payload names someone else.
 - A direct `UPDATE` of a projection fails under the member role.
 - A user outside the organization cannot read the row.
+- The service role is not granted a runtime insert.
 - Folding the same events twice yields the same projection rows.
 
 **Out of scope:** decision ingest, CI, the web app.
@@ -45,16 +48,18 @@ The rules on `cursor/horizon-agent-rules` still forbid a decision stream and pul
 
 **Depends on:** WP-01.
 
-**Owns:** `services/agent/` proposal commands and the `ProposalVerifier` port. Projection SQL for proposals stays in `supabase/` and may be extended here only for the proposal fold.
+**Owns:** `services/agent/**/proposal/` and the proposal grant rows. The `ProposalVerifier` port lives here.
 
 **Read:** [design.md](design.md) Commands, Authority. [adr/0002](adr/0002-human-member-approves.md), [adr/0003](adr/0003-mechanical-verdict.md)
 
-**Requirements:** FR-AUTH-1 through FR-AUTH-5
+**Requirements:** FR-AUTH-1 through FR-AUTH-5, FR-DEC-2, FR-DEC-6
 
 **Done when:**
 
-- The service account appends `ProposalCreated` and `ProposalVerified` and the database or the command rejects `ProposalApproved` from that account.
-- A human member can append `ProposalApproved`.
+- `horizon_writer` appends `ProposalCreated` and `ProposalVerified`.
+- A direct insert of `ProposalApproved` from the browser and from `horizon_writer` fails.
+- `approve_proposal` as a member appends `ProposalApproved` and `DecisionAccepted` in one transaction. The decision projection status becomes `accepted`.
+- `reject_proposal` appends `ProposalRejected` and `DecisionRejected` for a decision draft.
 - `ProposalVerified` for this phase records `NotConfigured`.
 - No model client exists on the verifier path.
 
@@ -62,7 +67,7 @@ The rules on `cursor/horizon-agent-rules` still forbid a decision stream and pul
 
 **Depends on:** WP-02.
 
-**Owns:** decision commands in `services/agent/`, ingest command, decision projection SQL.
+**Owns:** `services/agent/**/decision/`, `services/agent/**/sensor/` (the interface only), and the decision projection migration.
 
 **Read:** [design.md](design.md) Streams, Projections. [adr/0002](adr/0002-human-member-approves.md). FR-DEC-*.
 
@@ -71,7 +76,7 @@ The rules on `cursor/horizon-agent-rules` still forbid a decision stream and pul
 **Done when:**
 
 - A fixture ADR markdown file becomes `DecisionProposed` with suggested globs, not accepted globs.
-- After `ProposalApproved`, the command appends `DecisionAccepted` and the projection shows the globs as governing.
+- `approve_proposal` on that draft appends `DecisionAccepted` in the same transaction, and the projection shows the globs as governing.
 - Supersession leaves the old decision readable with status `superseded`.
 - CI-facing queries return no governing glob from a still-proposed decision.
 
@@ -79,7 +84,7 @@ The rules on `cursor/horizon-agent-rules` still forbid a decision stream and pul
 
 **Depends on:** WP-03. A fixture sensor is enough. WP-08 replaces that fixture with the compiler output. Do not wait for WP-08 to prove the library.
 
-**Owns:** the CI command and a GitHub Actions workflow that only invokes it. Check projection SQL.
+**Owns:** `services/agent/**/ci/`, `.github/workflows/` for this command, and the check projection migration. It calls the `Sensor` interface. It does not edit `harness/`.
 
 **Read:** [design.md](design.md) CI command. [adr/0003](adr/0003-mechanical-verdict.md), [adr/0004](adr/0004-ci-adr-library.md)
 
@@ -87,10 +92,11 @@ The rules on `cursor/horizon-agent-rules` still forbid a decision stream and pul
 
 **Done when:**
 
-- A diff inside a governed glob appends `applies` and exits 0 when the sensor passes.
+- A diff inside a governed glob appends `applies` for that one `adr_id` on the stream for `(org, repository, pull_request)`, and exits 0 when the sensor passes.
 - A diff the sensor rejects appends `violated`, exits non-zero, and does not append `DecisionSuperseded`.
-- A diff that merely intersects a path, with no ADR id in the pull request body, does not append `cited`.
-- Two violations may append `ProposalCreated`. They append no acceptance event.
+- A matched decision with no sensor appends `applies` with `sensor: "missing"`, does not append `violated`, and exits 0.
+- Text `ADR-0120` does not append `cited` for `ADR-012`.
+- A second red SHA appends `CheckRecorded` and does not open a second `review_violations` proposal.
 
 **Out of scope:** listing every open pull request on GitHub.
 
@@ -98,7 +104,7 @@ The rules on `cursor/horizon-agent-rules` still forbid a decision stream and pul
 
 **Depends on:** WP-03. Parallel with WP-04.
 
-**Owns:** the compiler in `services/agent/` and the harness projection.
+**Owns:** `services/agent/**/harness/` and the harness projection migration. It implements `Sensor`. It does not edit `ci/`.
 
 **Read:** [adr/0003](adr/0003-mechanical-verdict.md). FR-HAR-1 through FR-HAR-3.
 
@@ -106,9 +112,9 @@ The rules on `cursor/horizon-agent-rules` still forbid a decision stream and pul
 
 **Done when:**
 
-- An accepted decision whose constraint is a negative, path-scoped rule appends `HarnessCompiled`.
+- An accepted decision whose constraint is a negative check compiles one sensor candidate onto the proposal. `approve_proposal` appends `HarnessCompiled`.
 - The compiler refuses an artifact with no decision id.
-- WP-04's command can load that sensor instead of the fixture, with no model call on the check path.
+- The CI command loads that implementation through the `Sensor` interface, with no model call and no edit to the CI package.
 
 **Out of scope:** `AGENTS.md` generation, skills, eval, MCP.
 
@@ -116,7 +122,7 @@ The rules on `cursor/horizon-agent-rules` still forbid a decision stream and pul
 
 **Depends on:** WP-03 and WP-04.
 
-**Owns:** the read API in `services/agent/`. No UI.
+**Owns:** `services/agent/**/research/`. Reads go through the user JWT as `security invoker`. No service role. No UI.
 
 **Read:** [design.md](design.md) Research read. FR-RES-2.
 
@@ -124,7 +130,8 @@ The rules on `cursor/horizon-agent-rules` still forbid a decision stream and pul
 
 **Done when:**
 
-- A query by area returns accepted and superseded decisions, governed paths, `CheckRecorded` rows, gaps (decision with no glob, check with no decision), and open proposals.
+- A query by area returns accepted and superseded decisions, governed paths, `CheckRecorded` rows, gaps (decision with no glob, overlapping globs, check with no decision), and open proposals.
+- A caller in another organization receives no rows from this organization.
 - The module has no model import.
 - The response cites event ids the caller can resolve.
 
@@ -150,7 +157,7 @@ The rules on `cursor/horizon-agent-rules` still forbid a decision stream and pul
 
 **Depends on:** WP-05 and WP-06.
 
-**Owns:** the Koog workflow that returns catalog JSON and creates ADR proposals.
+**Owns:** `services/agent/**/view/`.
 
 **Read:** [design.md](design.md) Catalog. [adr/0005](adr/0005-user-led-research-view.md)
 
@@ -180,9 +187,9 @@ The rules on `cursor/horizon-agent-rules` still forbid a decision stream and pul
 
 **Owns:** eval command and `EvalCompleted` projection.
 
-**Requirements:** FR-RES-5
+**Requirements:** FR-EVL-1, FR-EVL-2
 
-**Done when:** a run prints the token spend and asks before it starts, then records `helpful`, `harmful`, or `inert` on the artifact. A harmful result is `ProposalCreated`, not a silent edit.
+**Done when:** a run prints the token spend and waits for confirmation, then records `helpful`, `harmful`, or `inert`. A harmful result is `ProposalCreated`, not a silent edit.
 
 ## Phase 3
 
@@ -194,6 +201,6 @@ The rules on `cursor/horizon-agent-rules` still forbid a decision stream and pul
 
 **Requirements:** none of phase 1.
 
-**Done when:** a review finding can be `learned_from` on a proposal, a human can confirm an `implements` claim distinct from `applies` / `cited` / `violated`, and a real Jev adapter can replace `NotConfigured` without calling a model.
+**Done when:** a review finding can be `learned_from` on a proposal, and a human can confirm an `implements` claim distinct from `applies` / `cited` / `violated`. `NotConfigured` is replaced only by an adapter that returns pass or fail from a schema or type check and does not call a model. If Jev cannot do that, this package does not add the client.
 
 **Out of scope until a human asks:** Jira, Slack, and extra agent runtimes.

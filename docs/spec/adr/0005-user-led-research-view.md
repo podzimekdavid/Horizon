@@ -10,11 +10,11 @@ A fixed dashboard of five panels is not the workspace. An agent that chooses the
 
 The user opens a research session and states the question. The agent does not open one on its own and does not decide.
 
-The agent returns a catalog document (`DecisionMap`, `ImplementationList`, `PullRequestLibrary`, `GapList`, `ProposalCard`) bound to citation ids from the deterministic read. A panel whose citations do not resolve is invalid and is not shown. The web app renders the catalog. It does not speak the A2UI wire protocol in phase 1.
+The agent returns a catalog document (`DecisionMap`, `ImplementationList`, `PullRequestLibrary`, `GapList`, `ProposalCard`). Every citation is an event id from the deterministic read. A path is the `DecisionAccepted` event. A pull request is the `CheckRecorded` event. A panel whose citations do not resolve is invalid and is not shown. The phase-1 view shows lineage, citations, gaps, and open proposals. It does not show a conflict relation or eval labels. The web app renders the catalog. It does not speak the A2UI wire protocol in phase 1.
 
 The catalog is a render payload. It is not a second record. Facts remain the events the panels cite.
 
-Discussion appends `DiscussionNoted` on the research session. Approval is only `ProposalApproved` from a human member, from the proposal card.
+Discussion appends `DiscussionNoted` on the research session. Approval is only `approve_proposal` or `reject_proposal`, called from the proposal card.
 
 The underlying projections stay readable when the agent service is stopped.
 

@@ -10,9 +10,9 @@ The product drafts ADRs, harness edits, and consolidation proposals with a model
 
 Model output is a proposal. The sequence is `ProposalCreated`, then `ProposalVerified`, then `ProposalApproved` or `ProposalRejected`.
 
-The agent service account may append `ProposalCreated` and `ProposalVerified`. It must not append `ProposalApproved` or `ProposalRejected`. Only a human organization member may approve or reject.
+`horizon_writer` may append `ProposalCreated`, `ProposalVerified`, and `DecisionProposed`. It must not append approval, rejection, `DecisionAccepted`, `DecisionSuperseded`, `HarnessCompiled`, or `CheckRecorded`. The service role is not a runtime writer, so a ban that lives only in RLS would not hold.
 
-Approval does not edit a projection. The accept command appends a separate domain event (`DecisionAccepted`, `HarnessCompiled`).
+A human member approves by calling `approve_proposal` or `reject_proposal`. Each function appends the approval event and the domain event (`DecisionAccepted`, `DecisionRejected`, `DecisionSuperseded`, or `HarnessCompiled`) in one transaction. The browser cannot insert `ProposalApproved`. A `BEFORE INSERT` trigger reads `actor_id` from the session and rejects event types the role is not granted.
 
 `DiscussionNoted` is not approval.
 
@@ -23,7 +23,7 @@ Approval does not edit a projection. The accept command appends a separate domai
 
 ## Consequences
 
-WP-02 enforces the service-account ban in the command and in RLS. WP-06's proposal card is the only UI control that requests approval.
+WP-01 ships the trigger and the grants table. WP-02 ships the two functions and the writer-role grants. WP-06's proposal card calls those functions and does not insert the approval event.
 
 ## Governs
 

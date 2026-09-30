@@ -12,7 +12,9 @@ A verdict is a schema check, a lint, a hook, or a test. `ProposalVerifier` recor
 
 Phase 1 ships `NotConfigured`. A human may still approve. The gap stays visible on the proposal.
 
-The CI sensor is the same kind of check for a decision against a diff. It does not call a model.
+The CI sensor is the same kind of check for a decision against a diff. It does not call a model. A missing sensor records `applies` with `sensor: "missing"` and does not record `violated`.
+
+A later adapter may replace `NotConfigured` only when it returns pass or fail from a schema or type check and does not call a model. If Jev cannot do that, the adapter is not added. This ADR is not superseded by wanting the integration.
 
 ## Rejected alternatives
 
