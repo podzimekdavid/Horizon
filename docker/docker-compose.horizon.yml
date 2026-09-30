@@ -1,5 +1,4 @@
-# Applies the Horizon event log on top of the self-hosted stack.
-# Loaded via COMPOSE_FILE in .env, locally and on a deployed host.
+# Applies the Horizon event log after Auth has migrated its schema.
 
 services:
   migrate:
@@ -7,6 +6,8 @@ services:
     restart: "no"
     depends_on:
       db:
+        condition: service_healthy
+      auth:
         condition: service_healthy
     environment:
       PGHOST: ${POSTGRES_HOST}
@@ -20,11 +21,6 @@ services:
       - ../supabase/seed.sql:/seed.sql:ro
       - ./horizon/migrate.sh:/migrate.sh:ro
     entrypoint: ["/bin/sh", "/migrate.sh"]
-
-  auth:
-    depends_on:
-      migrate:
-        condition: service_completed_successfully
 
   rest:
     depends_on:

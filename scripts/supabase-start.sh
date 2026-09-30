@@ -13,4 +13,7 @@ if [[ "${1:-}" == "reset" ]]; then
   rm -rf volumes/db/data
 fi
 
-exec docker compose up -d --wait
+if ! docker compose up -d --wait; then
+  docker compose logs migrate || true
+  exit 1
+fi

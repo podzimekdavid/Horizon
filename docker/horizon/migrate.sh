@@ -6,6 +6,10 @@ until pg_isready -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" >/dev/null 2>&1; do
   sleep 1
 done
 
+until psql -tAc "select to_regclass('auth.users')" | grep -q auth.users; do
+  sleep 1
+done
+
 psql -v ON_ERROR_STOP=1 <<'SQL'
 create schema if not exists supabase_migrations;
 create table if not exists supabase_migrations.schema_migrations (
@@ -25,8 +29,11 @@ for file in /migrations/*.sql; do
   if [ "$applied" = "1" ]; then
     continue
   fi
-  psql -v ON_ERROR_STOP=1 -f "$file"
-  psql -v ON_ERROR_STOP=1 -c "insert into supabase_migrations.schema_migrations (version, name) values ('${version}', '${name}')"
+  psql -v ON_ERROR_STOP=1 --single-transaction <<SQL
+\\i ${file}
+insert into supabase_migrations.schema_migrations (version, name)
+values ('${version}', '${name}');
+SQL
 done
 
 if [ "${HORIZON_SEED:-false}" = "true" ]; then

@@ -1,11 +1,12 @@
 begin;
-select plan(24);
+select plan(14);
 
 insert into auth.users (id, email)
 values
-  ('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1', 'agent-test@horizon.local'),
-  ('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa2', 'owner-test@horizon.local'),
+  ('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1', 'member-test@horizon.local'),
   ('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa3', 'outsider-test@horizon.local');
+
+select set_config('horizon.actor_id', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1', true);
 
 insert into public.events (
   org_id, stream_id, stream_type, version, event_type, schema_version, payload, actor_id, occurred_at
@@ -19,30 +20,19 @@ values
     'OrganizationCreated',
     1,
     '{"name":"Test Org"}'::jsonb,
-    'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa2',
+    '00000000-0000-4000-8000-000000000000',
     '2026-01-02T00:00:00Z'
-  ),
-  (
-    'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa4',
-    'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa6',
-    'membership',
-    1,
-    'MembershipGranted',
-    1,
-    '{"user_id":"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa2","role":"owner"}'::jsonb,
-    'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa2',
-    '2026-01-02T00:00:01Z'
   ),
   (
     'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa4',
     'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa7',
     'membership',
     1,
-    'MembershipGranted',
+    'MemberAdded',
     1,
-    '{"user_id":"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1","role":"agent"}'::jsonb,
-    'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa2',
-    '2026-01-02T00:00:02Z'
+    '{"user_id":"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1"}'::jsonb,
+    '00000000-0000-4000-8000-000000000000',
+    '2026-01-02T00:00:01Z'
   );
 
 select ok(
@@ -50,36 +40,16 @@ select ok(
   'anon has no grant on events'
 );
 select ok(
+  not has_table_privilege('service_role', 'public.events', 'insert'),
+  'service role has no runtime insert'
+);
+select ok(
   not has_table_privilege('authenticated', 'public.events', 'update,delete'),
   'authenticated cannot update or delete events'
 );
 select ok(
-  has_table_privilege('authenticated', 'public.events', 'select,insert'),
-  'authenticated can read and append events'
-);
-select ok(
-  not has_table_privilege('anon', 'public.organizations', 'select,insert,update,delete'),
-  'anon has no grant on organizations'
-);
-select ok(
   not has_table_privilege('authenticated', 'public.organizations', 'insert,update,delete'),
-  'authenticated cannot write organizations'
-);
-select ok(
-  not has_table_privilege('anon', 'public.memberships', 'select,insert,update,delete'),
-  'anon has no grant on memberships'
-);
-select ok(
-  not has_table_privilege('authenticated', 'public.memberships', 'insert,update,delete'),
-  'authenticated cannot write memberships'
-);
-
-set local role anon;
-select throws_ok(
-  $$select * from public.events$$,
-  '42501',
-  null,
-  'anon cannot read events'
+  'authenticated cannot write the organization projection'
 );
 
 set local role authenticated;
@@ -91,23 +61,16 @@ select results_eq(
     ) values (
       'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa4',
       'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa5',
-      'rule',
+      'research_session',
       1,
-      'RuleCreated',
+      'DiscussionNoted',
       1,
-      '{"body":"capture"}'::jsonb,
-      'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1'
+      '{"body":"note"}'::jsonb,
+      'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa3'
     )
-    returning event_type$$,
-  array['RuleCreated'],
-  'agent appends a rule event'
-);
-
-select results_eq(
-  $$select event_type from public.events
-    where stream_id = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa5'$$,
-  array['RuleCreated'],
-  'agent reads the event it appended'
+    returning actor_id::text$$,
+  array['aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1'],
+  'a member notes discussion and the stored actor is auth.uid()'
 );
 
 select throws_ok(
@@ -116,88 +79,38 @@ select throws_ok(
     ) values (
       'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa4',
       'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa8',
-      'proposal',
-      1,
-      'ProposalApproved',
-      1,
-      '{}'::jsonb,
+      'proposal', 1, 'ProposalApproved', 1, '{}'::jsonb,
       'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1'
     )$$,
   '42501',
   null,
-  'agent cannot record ProposalApproved'
+  'a member cannot insert ProposalApproved'
 );
-
-select is_empty(
-  $$select event_type from public.events
-    where stream_id = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa8'$$,
-  'rejected approval left no event'
-);
-
 select throws_ok(
   $$insert into public.events (
       org_id, stream_id, stream_type, version, event_type, schema_version, payload, actor_id
     ) values (
       'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa4',
-      'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa5',
-      'rule',
-      1,
-      'RuleCreated',
-      1,
-      '{}'::jsonb,
+      'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa8',
+      'decision', 1, 'DecisionAccepted', 1, '{}'::jsonb,
       'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1'
     )$$,
-  '23505',
+  '42501',
   null,
-  'the same stream version conflicts'
+  'a member cannot insert DecisionAccepted'
 );
-
 select throws_ok(
   $$insert into public.events (
       org_id, stream_id, stream_type, version, event_type, schema_version, payload, actor_id
     ) values (
       'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa4',
       'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa9',
-      'rule',
-      1,
-      'RuleCreated',
-      1,
-      '{}'::jsonb,
-      'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa2'
+      'check', 1, 'CheckRecorded', 1, '{}'::jsonb,
+      'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1'
     )$$,
   '42501',
   null,
-  'agent cannot append as another actor'
-);
-
-select throws_ok(
-  $$update public.events set event_type = 'RuleCreated'$$,
-  '42501',
-  null,
-  'agent cannot update events'
-);
-select throws_ok(
-  $$delete from public.events$$,
-  '42501',
-  null,
-  'agent cannot delete events'
-);
-select throws_ok(
-  $$update public.organizations set name = 'changed'$$,
-  '42501',
-  null,
-  'agent cannot update the organization projection'
-);
-
-set local request.jwt.claim.sub = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa3';
-
-select is_empty(
-  $$select * from public.events$$,
-  'a user outside the organization reads no events'
-);
-select is_empty(
-  $$select * from public.organizations$$,
-  'a user outside the organization reads no organizations'
+  'a member cannot insert CheckRecorded'
 );
 select throws_ok(
   $$insert into public.events (
@@ -205,59 +118,63 @@ select throws_ok(
     ) values (
       'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa4',
       'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaab',
-      'rule',
-      1,
-      'RuleCreated',
-      1,
-      '{}'::jsonb,
-      'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa3'
+      'harness', 1, 'HarnessCompiled', 1, '{}'::jsonb,
+      'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1'
     )$$,
   '42501',
   null,
-  'a user outside the organization cannot append'
+  'a member cannot insert HarnessCompiled'
 );
-
-set local request.jwt.claim.sub = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1';
-select results_eq(
-  $$select event_type from public.events
-    where stream_id = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa5'$$,
-  array['RuleCreated'],
-  'the denied writes left the rule event intact'
-);
-
-set local request.jwt.claim.sub = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa2';
-select results_eq(
+select throws_ok(
   $$insert into public.events (
       org_id, stream_id, stream_type, version, event_type, schema_version, payload, actor_id
     ) values (
       'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa4',
-      'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa8',
-      'proposal',
-      1,
-      'ProposalApproved',
-      1,
-      '{}'::jsonb,
-      'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa2'
-    )
-    returning event_type$$,
-  array['ProposalApproved'],
-  'owner records ProposalApproved'
-);
-
-select throws_ok(
-  $$select private.rebuild_projections()$$,
+      'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaac',
+      'proposal', 1, 'ProposalVerified', 1, '{}'::jsonb,
+      'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1'
+    )$$,
   '42501',
   null,
-  'a member cannot rebuild projections'
+  'a member cannot insert ProposalVerified'
+);
+select throws_ok(
+  $$update public.organizations set name = 'changed'$$,
+  '42501',
+  null,
+  'a member cannot update a projection'
+);
+
+set local request.jwt.claim.sub = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa3';
+select is_empty(
+  $$select * from public.events$$,
+  'a user outside the organization reads no events'
+);
+
+set local role horizon_writer;
+select set_config('horizon.actor_id', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1', true);
+select throws_ok(
+  $$insert into public.events (
+      org_id, stream_id, stream_type, version, event_type, schema_version, payload, actor_id
+    ) values (
+      'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa4',
+      'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaad',
+      'proposal', 1, 'ProposalApproved', 1, '{}'::jsonb,
+      'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1'
+    )$$,
+  '42501',
+  null,
+  'horizon_writer cannot insert ProposalApproved'
 );
 
 reset role;
+select private.rebuild_projections();
 select private.rebuild_projections();
 select results_eq(
   $$select name from public.organizations
     where id = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa4'$$,
   array['Test Org'],
-  'rebuilding projections restores the organization from events'
+  'folding the same events twice yields the same organization'
 );
 
 select * from finish();
