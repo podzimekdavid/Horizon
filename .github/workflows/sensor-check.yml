@@ -1,0 +1,28 @@
+name: Sensor
+
+on:
+  pull_request:
+
+jobs:
+  sensor:
+    name: ADR-0006 sensor
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Scan changed code
+        env:
+          TYPESAFE_API_KEY: ${{ secrets.TYPESAFE_API_KEY }}
+          SEMGREP_DOCKER: "1"
+        run: |
+          git diff --name-only --diff-filter=ACMR "origin/${{ github.base_ref }}"...HEAD \
+            -- '*.ts' '*.tsx' '*.js' '*.kt' '*.py' > "$RUNNER_TEMP/changed.txt"
+          if [ ! -s "$RUNNER_TEMP/changed.txt" ]; then
+            echo "No code files changed." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          node spikes/sensor-algorithm/run.mjs --list "$RUNNER_TEMP/changed.txt"
