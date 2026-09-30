@@ -180,7 +180,7 @@ A team shares one log across repositories. One person can run the same loop in a
 
 ### GitHub ingestion
 
-Decided. A GitHub App on the organization sends HTTPS webhooks to `services/agent` on Render. The service checks `X-Hub-Signature-256`, treats `X-GitHub-Delivery` as idempotent, keeps the subscribed event types, and appends to `events`. Supabase is the log. GitHub does not call Supabase.
+A GitHub App on the organization sends HTTPS webhooks to `services/agent` on Render. The service checks `X-Hub-Signature-256`, treats `X-GitHub-Delivery` as idempotent, keeps the subscribed event types, and appends to `events`. Supabase is the log. GitHub does not call Supabase.
 
 A push is one delivery. The body lists at most 20 commits. A larger push is completed with the compare API before the append. A merged pull request delivers `pull_request` with action `closed` and `merged: true`, and a `push` to the base branch. A pull request closed without a merge delivers only `pull_request`.
 
