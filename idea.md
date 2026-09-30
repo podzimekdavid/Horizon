@@ -6,7 +6,9 @@ Pitch:
 
 > The architect asks what the system decided, sees where that decision lives in the code and in open pull requests, and accepts or supersedes the ADR in the same view. Agents then run the harness compiled from that decision, and the next pull request shows up on it.
 
-This draft restores the architect workspace as the product. The harness loop is how a decision stays executable. The Cursor rules on `cursor/horizon-agent-rules` still fence phase 1 to harness streams only (no decisions, no pull requests, no graph). That fence is narrower than this draft. Update those rules before implementation follows this spec.
+This file is the product narrative. The assignment for implementation is [docs/spec/README.md](docs/spec/README.md): requirements, work packages, the technical design, and the first ADR drafts. When they disagree, `docs/spec/` wins.
+
+The Cursor rules on `cursor/horizon-agent-rules` still fence phase 1 to harness streams only. WP-00 in the spec is the package that opens those rules to the decision stream and the CI library.
 
 ## Problem
 
