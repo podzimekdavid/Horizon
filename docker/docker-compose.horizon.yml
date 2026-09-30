@@ -1,0 +1,32 @@
+# Applies the Horizon event log on top of the self-hosted stack.
+# Loaded via COMPOSE_FILE in .env, locally and on a deployed host.
+
+services:
+  migrate:
+    image: postgres:17-alpine
+    restart: "no"
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      PGHOST: ${POSTGRES_HOST}
+      PGPORT: ${POSTGRES_PORT}
+      PGUSER: postgres
+      PGPASSWORD: ${POSTGRES_PASSWORD}
+      PGDATABASE: ${POSTGRES_DB}
+      HORIZON_SEED: ${HORIZON_SEED:-false}
+    volumes:
+      - ../supabase/migrations:/migrations:ro
+      - ../supabase/seed.sql:/seed.sql:ro
+      - ./horizon/migrate.sh:/migrate.sh:ro
+    entrypoint: ["/bin/sh", "/migrate.sh"]
+
+  auth:
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
+  rest:
+    depends_on:
+      migrate:
+        condition: service_completed_successfully

@@ -1,23 +1,16 @@
 #!/usr/bin/env bash
-# Append one event through the local API and confirm the agent role cannot approve.
+# Append one event through the Compose API and confirm the agent role cannot approve.
 set -euo pipefail
-cd "$(dirname "$0")/.."
+root="$(cd "$(dirname "$0")/.." && pwd)"
+cd "$root"
 
-status="$(npx supabase status -o env)"
 set -a
-# shellcheck disable=SC1090
-eval "$status"
+# shellcheck disable=SC1091
+source docker/.env
 set +a
 
-key="${PUBLISHABLE_KEY:-${ANON_KEY:-}}"
-url="${API_URL:-}"
-if [[ -z "$key" || -z "$url" ]]; then
-  echo "supabase status did not report API_URL and a publishable key" >&2
-  exit 1
-fi
-
-export HORIZON_SUPABASE_URL="$url"
-export HORIZON_SUPABASE_PUBLISHABLE_KEY="$key"
+export HORIZON_SUPABASE_URL="${SUPABASE_PUBLIC_URL:?}"
+export HORIZON_SUPABASE_PUBLISHABLE_KEY="${SUPABASE_PUBLISHABLE_KEY:-${ANON_KEY:?}}"
 export HORIZON_EMAIL="${HORIZON_EMAIL:-agent@horizon.local}"
 export HORIZON_PASSWORD="${HORIZON_PASSWORD:-horizon-local-dev}"
 export HORIZON_ORG_ID="${HORIZON_ORG_ID:-00000000-0000-4000-8000-000000000001}"

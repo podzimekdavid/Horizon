@@ -1,27 +1,12 @@
 #!/usr/bin/env bash
-# Apply the committed Supabase config and migrations to one hosted project.
-# Seed data is not included. Set the variables for the target environment:
-#   SUPABASE_ACCESS_TOKEN
-#   SUPABASE_DB_PASSWORD
-#   SUPABASE_PROJECT_ID
-#   HORIZON_AUTH_SITE_URL
-#   HORIZON_AUTH_ADDITIONAL_REDIRECT_URL
+# Start the same Compose stack on a host that already has docker/.env.
+# URLs and secrets in that file are the only difference between environments.
 set -euo pipefail
-cd "$(dirname "$0")/.."
+cd "$(dirname "$0")/../docker"
 
-if [[ -f .env ]]; then
-  set -a
-  # shellcheck disable=SC1091
-  source .env
-  set +a
+if [[ ! -f .env ]]; then
+  echo "docker/.env is missing. Copy docker/.env.example, set the URLs for this environment, then run utils/generate-keys.sh --update-env." >&2
+  exit 1
 fi
 
-: "${SUPABASE_ACCESS_TOKEN:?Set SUPABASE_ACCESS_TOKEN for the target project}"
-: "${SUPABASE_DB_PASSWORD:?Set SUPABASE_DB_PASSWORD for the target project}"
-: "${SUPABASE_PROJECT_ID:?Set SUPABASE_PROJECT_ID for the target project}"
-: "${HORIZON_AUTH_SITE_URL:?Set HORIZON_AUTH_SITE_URL for the target environment}"
-: "${HORIZON_AUTH_ADDITIONAL_REDIRECT_URL:?Set HORIZON_AUTH_ADDITIONAL_REDIRECT_URL for the target environment}"
-
-npx supabase link --project-ref "$SUPABASE_PROJECT_ID" --yes
-npx supabase db push --linked --yes
-npx supabase config push --project-ref "$SUPABASE_PROJECT_ID" --yes
+exec docker compose up -d --wait

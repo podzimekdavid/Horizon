@@ -1,21 +1,16 @@
 #!/usr/bin/env bash
-# Start or reset the local stack. Auth URLs default for this machine.
-# A deploy does not use this script; see scripts/supabase-deploy.sh.
+# Same Compose stack as a deployed environment. First local run writes docker/.env.
 set -euo pipefail
-cd "$(dirname "$0")/.."
+cd "$(dirname "$0")/../docker"
 
-if [[ -f .env ]]; then
-  set -a
-  # shellcheck disable=SC1091
-  source .env
-  set +a
+if [[ ! -f .env ]]; then
+  cp .env.example .env
+  sh utils/generate-keys.sh --update-env
 fi
-
-export HORIZON_AUTH_SITE_URL="${HORIZON_AUTH_SITE_URL:-http://127.0.0.1:3000}"
-export HORIZON_AUTH_ADDITIONAL_REDIRECT_URL="${HORIZON_AUTH_ADDITIONAL_REDIRECT_URL:-http://127.0.0.1:3000}"
 
 if [[ "${1:-}" == "reset" ]]; then
-  exec npx supabase db reset
+  docker compose down -v --remove-orphans
+  rm -rf volumes/db/data
 fi
 
-exec npx supabase start
+exec docker compose up -d --wait

@@ -2,13 +2,12 @@
   "name": "horizon",
   "private": true,
   "scripts": {
-    "supabase": "supabase",
     "db:start": "bash scripts/supabase-start.sh",
     "db:reset": "bash scripts/supabase-start.sh reset",
-    "db:test": "supabase test db",
-    "db:push": "bash scripts/supabase-deploy.sh",
+    "db:test": "bash scripts/db-test.sh",
+    "db:up": "bash scripts/supabase-deploy.sh",
     "horizon": "node cli/horizon.mjs",
-    "test": "supabase test db && bash scripts/smoke-cli.sh"
+    "test": "bash scripts/db-test.sh && bash scripts/smoke-cli.sh"
   },
   "devDependencies": {
     "supabase": "2.118.0"
