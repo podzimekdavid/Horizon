@@ -50,6 +50,19 @@ jobs:
           path: .ci-cache/docker-images.tar.zst
           key: docker-images-${{ runner.os }}-${{ hashFiles('docker/docker-compose.yml', 'docker/docker-compose.horizon.yml') }}
 
+      # `web` is built from apps/web. Build it here with a layer cache (npm ci, Vite build) and load it as
+      # horizon-web; `docker compose up` finds the image and does not rebuild it.
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build web image
+        uses: docker/build-push-action@v6
+        with:
+          context: apps/web
+          tags: horizon-web
+          load: true
+          cache-from: type=gha,scope=horizon-web
+          cache-to: type=gha,scope=horizon-web,mode=max
+
       - run: bash scripts/supabase-start.sh
       - run: bash scripts/db-test.sh
       - run: bash scripts/smoke-cli.sh

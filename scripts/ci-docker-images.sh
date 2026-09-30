@@ -10,8 +10,16 @@ cd "$root/docker"
 # Same files as COMPOSE_FILE in docker/.env.example. Image tags are literal, so no .env is needed.
 compose_files=(docker-compose.yml docker-compose.horizon.yml)
 
+# Registry images only. A service with a `build:` block also carries an `image:` tag (horizon-web),
+# which names the local build and cannot be pulled.
 list_images() {
-  grep -hE '^[[:space:]]+image:[[:space:]]' "${compose_files[@]}" | awk '{print $2}' | sort -u
+  awk '
+    function flush() { if (image != "" && !built) print image; image = ""; built = 0 }
+    /^  [A-Za-z0-9_-]+:[[:space:]]*$/ { flush(); next }
+    /^    build:/ { built = 1 }
+    /^    image:[[:space:]]/ { image = $2 }
+    END { flush() }
+  ' "${compose_files[@]}" | sort -u
 }
 
 case "${1:-}" in
