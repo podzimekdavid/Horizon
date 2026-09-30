@@ -130,7 +130,7 @@ CI makes an accepted decision binding on a pull request, and it writes the ADR l
 
 On the changed paths the command selects the decisions whose scope applies, runs the mechanical sensor compiled from each decision, and fails the check when one is violated. The model does not produce that verdict.
 
-The same run records the three relations above. Smallest version: a CI command that fails the job and appends one event per relation, carrying the pull request, the SHA, and the ADR ids. Full GitHub ingestion can wait. The command only knows the pull request it is running on.
+The same run records the three relations above. Smallest version: a CI command that fails the job and appends one event per relation, carrying the pull request, the SHA, and the ADR ids. The command only knows the pull request it is running on. Other GitHub activity arrives later, on the webhook path in GitHub ingestion.
 
 Repeated violations may open a proposal. They do not change the decision by themselves.
 
@@ -180,6 +180,16 @@ A team shares one log across repositories. One person can run the same loop in a
 - Every tenant-owned row has `org_id`.
 - Jev is a `ProposalVerifier` port. It checks a proposal, not a decision. The first slice returns `NotConfigured` and records that on `ProposalVerified`. When a check exists, the port reports only a mechanical verdict: schema, lint, hook, or test. It must not call a model. The CI sensor is that kind of check for a decision on a pull request.
 
+### GitHub ingestion
+
+A GitHub App on the organization sends HTTPS webhooks to `services/agent` on Render. The service checks `X-Hub-Signature-256`, treats `X-GitHub-Delivery` as idempotent, keeps the subscribed event types, and appends to `events`. Supabase is the log. GitHub does not call Supabase.
+
+Which event types the App subscribes to is still open.
+
+`CheckRecorded` is still appended by the CI command for that pull request, through the same append function. The webhook does not record `applies`, `cited`, or `violated`.
+
+A one-time poll through that function loads history already on GitHub. The live feed is the webhook. Phase 1 appends `CheckRecorded` from CI and does not run the receiver. Phase 3 turns the receiver on for the event types chosen by then.
+
 ## Phases
 
 Each phase is a demo by itself. The first demo is one an architect recognizes.
@@ -188,7 +198,7 @@ Each phase is a demo by itself. The first demo is one an architect recognizes.
 
 1. Event log and human approval of proposals. Discussion on the research view is not approval.
 2. Ingest existing ADRs into a decision stream: status, rejected alternatives, path globs.
-3. CI command on the pull request under test. It selects applicable decisions, runs the mechanical sensor, fails the job on `violated`, and appends `CheckRecorded` with the pull request, the SHA, the ADR ids, and `applies`, `cited`, or `violated`. Full GitHub ingestion waits.
+3. CI command on the pull request under test. It selects applicable decisions, runs the mechanical sensor, fails the job on `violated`, and appends `CheckRecorded` with the pull request, the SHA, the ADR ids, and `applies`, `cited`, or `violated`. The webhook receiver waits until phase 3.
 4. Research session the user leads. Deterministic retrieval, then a generated view. Every panel cites an event, a path, or a pull request. An uncited panel is invalid.
 5. The team discusses that view. An ADR draft is a proposal card on it. A human member accepts or rejects it.
 6. The React catalog is the first renderer of that view: decision map, implementation list, pull request library, gap list, proposal card.
@@ -204,7 +214,7 @@ Bootstrap (`AGENTS.md`, `.cursor/rules`, skill), verify (dead references, contra
 
 ### Phase 3 — Wider evidence
 
-Review findings and `learned_from`. Full GitHub ingestion beyond the pull request CI is running on. A human-confirmed "implements" claim, kept separate from `applies` / `cited` / `violated`. Cross-repo etalon rollout. A real Jev adapter for the proposals that need a mechanical check. Jira, Slack, and further agent runtimes are new event types when a team asks.
+The GitHub App webhook on `services/agent` appends the event types chosen by then. Review findings and `learned_from`. A human-confirmed "implements" claim, kept separate from `applies` / `cited` / `violated`. Cross-repo etalon rollout. A real Jev adapter for the proposals that need a mechanical check. Jira, Slack, and further agent runtimes are new event types when a team asks.
 
 ## Out of scope
 
@@ -232,6 +242,7 @@ Review findings and `learned_from`. Full GitHub ingestion beyond the pull reques
 - Does the research brief live only on the proposal payload, or is the generated view its own stream?
 - Are comments in the discussion step events, or are they outside the log until someone turns one into a proposal?
 - When Jev gets a real adapter, which proposals must pass that mechanical check before a human can approve: ADR acceptance, harness compile, or both?
+- Which GitHub webhook event types does phase 3 subscribe to?
 
 ## Sources
 
