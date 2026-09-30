@@ -60,7 +60,7 @@ Event names are past-tense PascalCase. `schema_version` starts at 1.
 | Role | Event types |
 |---|---|
 | member (`authenticated`) | `ResearchSessionOpened`, `DiscussionNoted` |
-| `horizon_writer` | `ProposalCreated`, `ProposalVerified`, `DecisionProposed` |
+| `horizon_writer` | `ProposalCreated`, `ProposalVerified`, `DecisionProposed`, `PullRequestReceived` |
 | `horizon_ci` | `CheckRecorded`, `ProposalCreated` of kind `review_violations` only |
 | `approve_proposal` / `reject_proposal` | `ProposalApproved` or `ProposalRejected`, plus the one domain event the kind names |
 
@@ -75,6 +75,7 @@ Event names are past-tense PascalCase. `schema_version` starts at 1.
 | `proposal` | `ProposalCreated`, `ProposalVerified`, `ProposalApproved`, `ProposalRejected` |
 | `decision` | `DecisionProposed`, `DecisionAccepted`, `DecisionRejected`, `DecisionSuperseded` |
 | `check` | `CheckRecorded` |
+| `pull_request` | `PullRequestReceived` |
 | `research_session` | `ResearchSessionOpened`, `DiscussionNoted` |
 | `harness` | `HarnessCompiled` |
 
@@ -90,6 +91,10 @@ A proposal payload has a `kind`: `accept_decision`, `reject_decision`, `supersed
 `reject_proposal` appends `ProposalRejected` and, for a decision draft, `DecisionRejected`.
 
 A direct insert of `ProposalApproved`, `DecisionAccepted`, `DecisionRejected`, `DecisionSuperseded`, or `HarnessCompiled` from the browser fails the trigger.
+
+## Pull request stream identity
+
+One `pull_request` stream per `(org_id, repository, pull_request)`, written only by the GitHub webhook receiver through `append_pull_request_received`. Its `stream_id` is a UUIDv3 of a name that starts with the stream type, so it never equals the check stream's UUIDv5 for the same pull request. The function reads the next version under a per-stream lock, dedupes on `payload.delivery_id`, and refuses a stream id that belongs to another stream type.
 
 ## Check identity
 

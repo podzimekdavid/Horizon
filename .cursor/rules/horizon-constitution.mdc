@@ -9,7 +9,7 @@ Horizon is an event-sourced engineering memory. Phase 1 stores decisions (ADRs),
 
 ## Phase 1 streams
 
-`organization`, `membership`, `proposal`, `decision`, `check`, `research_session`, `harness`
+`organization`, `membership`, `proposal`, `decision`, `check`, `research_session`, `harness`, `pull_request`
 
 ## Forbidden in phase 1
 
@@ -30,7 +30,7 @@ Use Supabase for every capability it already provides: Postgres, Auth, RLS, Stor
 
 Custom command logic and every AI workflow live in Kotlin with Koog (`services/agent`). Do not put that logic in Edge Functions or in the web app.
 
-GitHub App webhooks are delivered to `services/agent`. The service verifies `X-Hub-Signature-256`, dedupes `X-GitHub-Delivery`, and appends to `events`. Which event types are subscribed is still open. Do not point GitHub at an Edge Function, at `apps/web`, or at Supabase. Phase 1 does not ingest GitHub events. The path is specified in `idea.md`.
+GitHub App webhooks are delivered to `services/agent`. The service verifies `X-Hub-Signature-256`, dedupes `X-GitHub-Delivery`, and for the subscribed `pull_request` event appends `PullRequestReceived` to `events`. `CheckRecorded` remains the CI command only. Do not point GitHub at an Edge Function, at `apps/web`, or at Supabase. Phase 1 does not turn the receiver on as a product requirement; the path is specified in `idea.md`.
 
 ## Layout
 
@@ -40,7 +40,7 @@ GitHub App webhooks are delivered to `services/agent`. The service verifies `X-H
 
 ## Authority
 
-An AI result is a proposal. `horizon_writer` may append `ProposalCreated`, `ProposalVerified`, and `DecisionProposed`. It must not append `ProposalApproved`, `ProposalRejected`, `DecisionAccepted`, `DecisionSuperseded`, `HarnessCompiled`, or `CheckRecorded`.
+An AI result is a proposal. `horizon_writer` may append `ProposalCreated`, `ProposalVerified`, `DecisionProposed`, and `PullRequestReceived` (the GitHub webhook receiver, through `append_pull_request_received`). It must not append `ProposalApproved`, `ProposalRejected`, `DecisionAccepted`, `DecisionSuperseded`, `HarnessCompiled`, or `CheckRecorded`.
 
 A human member approves by calling `approve_proposal` or `reject_proposal`. The function appends the approval event and the domain event in one transaction. The browser cannot insert those event types.
 
