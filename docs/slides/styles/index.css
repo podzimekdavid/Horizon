@@ -105,6 +105,10 @@
   margin-top: 0.85rem;
 }
 
+.tiles.three {
+  grid-template-columns: repeat(3, 1fr);
+}
+
 .tile {
   border: 1px solid rgba(198, 232, 154, 0.38);
   background: rgba(11, 18, 14, 0.78);
