@@ -13,9 +13,10 @@ Supabase hosts the event log. The event table is the system of record. Projectio
 - Enable RLS on every table in an exposed schema, including projections.
 - Policies key off organization membership and `auth.uid()`. Do not read `user_metadata` for authorization.
 - The publishable (anon) key is the only Supabase key allowed in `apps/web`.
-- The service role stays in `services/agent`. Never commit it and never put it in `VITE_` or `NEXT_PUBLIC_` variables.
+- The service role is for migrations and admin only. It is never a runtime writer: `services/agent` writes as `horizon_writer`, the CI command as `horizon_ci`, and research reads forward the user JWT. Never commit the service role and never put it in `VITE_` or `NEXT_PUBLIC_` variables.
+- A `BEFORE INSERT` trigger on `events` sets `actor_id` from the session and rejects event types that `event_type_grants` does not grant to the current role. WP-01 owns the trigger; later packages insert grant rows only.
 - Views in Postgres 15+ use `security_invoker = true`.
-- Do not place `security definer` functions in an exposed schema.
+- The fold and its helpers are `security definer` in the `private` schema, never exposed. The command API (`approve_proposal`, `reject_proposal`) must be RPC-callable, so it is `security definer` in `public` with `set search_path = ''` and an explicit membership check inside.
 - Do not create a client `UPDATE` or `DELETE` policy on `events` or on projection tables. Projections are written only by the Postgres function that folds events.
 - If a later table genuinely needs a client `UPDATE`, that policy also needs a `SELECT` policy. Without it, Postgres updates zero rows and returns no error.
 
@@ -33,4 +34,4 @@ Create a new empty migration only through `supabase migration new <name>`. Do no
 
 ## Local
 
-After a migration, prove the claim with a query: an event insert succeeds, a direct update of a projection fails, and a user outside the organization cannot read the row.
+After a migration, prove the claim with a query or a pgTAP test: a member insert of a granted event type succeeds, an ungranted type fails, a payload `actor_id` is overridden by the session, a direct update of a projection fails, and a user outside the organization cannot read the row.

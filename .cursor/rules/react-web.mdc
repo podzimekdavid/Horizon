@@ -11,20 +11,28 @@ alwaysApply: false
 ## Data access
 
 - Use `supabase-js` with the publishable key and the user session.
-- Read projections. Do not treat the browser as the place that maintains read models.
-- Append an event from the client only when RLS can authorize that insert alone.
+- Read projections. Decision, path, and check facts stay readable with `services/agent` stopped. Do not treat the browser as the place that maintains read models.
+- The client inserts only member-granted event types: `ResearchSessionOpened` and `DiscussionNoted`. The insert trigger sets `actor_id` from the session — do not send it.
+- Approval and rejection go through the `approve_proposal` / `reject_proposal` RPCs. Never insert `ProposalApproved` or `ProposalRejected` from the browser.
 - If a command needs branching, a model, or more than one stream, call `services/agent`. Do not reimplement that command in the client.
+
+## Catalog
+
+- The research view renders the catalog JSON returned by `services/agent`. Phase-1 components are `DecisionMap`, `ImplementationList`, `PullRequestLibrary`, `GapList`, and `ProposalCard`.
+- Drop unknown component names. Drop any panel whose `citations` are not event ids from the same response.
+- The A2UI wire protocol is out of scope for phase 1.
 
 ## UI
 
 - Functional components. Shared data access goes in hooks next to the feature.
-- A proposal is shown as proposed, verified, approved, or rejected. The UI never marks a proposal approved without the human action that appends the approval event.
+- The proposal card is the only control that calls `approve_proposal` or `reject_proposal`. The UI never marks a proposal approved without that human action.
+- Discussion posts `DiscussionNoted` on the research session. It is not approval.
 - Do not import an LLM SDK, Koog, or a service-role client.
 
 ```tsx
 // ❌ client writes the read model
-await supabase.from("rules").update({ body }).eq("id", id);
+await supabase.from("decisions").update({ status: "accepted" }).eq("id", id);
 
 // ✅ client appends a fact the member is allowed to record
-await supabase.from("events").insert({ org_id, stream_id, stream_type: "rule", version, event_type: "RuleUpdated", schema_version: 1, payload, actor_id });
+await supabase.from("events").insert({ org_id, stream_id, stream_type: "research_session", version, event_type: "DiscussionNoted", schema_version: 1, payload });
 ```

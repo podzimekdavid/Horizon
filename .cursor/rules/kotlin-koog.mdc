@@ -6,30 +6,30 @@ alwaysApply: false
 
 # Agent service
 
-`services/agent` is the only home for custom command logic and AI. Product memory is the Supabase event log. Koog's own persistence and memory store agent checkpoints only, never rules, skills, prompts, or evaluations.
+`services/agent` is the only home for custom command logic and AI. Product memory is the Supabase event log. Koog's own persistence and memory store agent checkpoints only, never decisions, rules, checks, or proposals.
 
 ## Runtime
 
 - JDK 17 or newer. Depend on stable Koog modules (`ai.koog:koog-agents` 1.0.x). Add a beta module only when the stable API cannot do the job.
 - Host the HTTP API with Ktor.
-- Load the Supabase service role from the server environment. Do not log it or return it to `apps/web`.
+- Write events as `horizon_writer`; the CI command writes as `horizon_ci`. The Supabase service role is for migrations and admin only — never load it as a runtime writer, never log it, never return it to `apps/web`.
 
 ## Commands
 
 A command appends events. It does not `UPDATE` projection tables. Use the stream version for optimistic concurrency and retry on a version conflict.
 
-The service account may append `ProposalCreated` and `ProposalVerified`. It must refuse `ProposalApproved` and `ProposalRejected`.
+`horizon_writer` may append `ProposalCreated`, `ProposalVerified`, and `DecisionProposed`. It must refuse `ProposalApproved`, `ProposalRejected`, `DecisionAccepted`, `DecisionSuperseded`, `HarnessCompiled`, and `CheckRecorded`. Approval and rejection happen only through the `approve_proposal` / `reject_proposal` functions, called by a human member.
 
 ## Jev
 
-Call verification through a `ProposalVerifier` port. It checks a proposal, not a decision. Phase 1 has no decision stream.
+Call verification through a `ProposalVerifier` port. It checks a proposal.
 
-The phase-1 implementation returns `NotConfigured` and records that outcome on `ProposalVerified`. Do not add a TypeSafe HTTP client in this phase. The port reports only a mechanical verdict (schema, lint, hook, or test) and must not call a model.
+The phase-1 implementation returns `NotConfigured` and records that outcome on `ProposalVerified`. A human may still approve while the verdict is `NotConfigured`; the gap stays visible on the proposal. Do not add a TypeSafe HTTP client in this phase. The port reports only a mechanical verdict (schema, lint, hook, or test) and must not call a model.
 
 ```kotlin
-// ❌ Koog memory is not the harness
-memory.write("rule", body)
+// ❌ Koog memory is not the record
+memory.write("decision", body)
 
-// ✅ the harness fact is an event
-eventStore.append(RuleUpdated(orgId, streamId, expectedVersion, body, actorId))
+// ✅ the fact is an event
+eventStore.append(DecisionProposed(orgId, streamId, expectedVersion, payload))
 ```
